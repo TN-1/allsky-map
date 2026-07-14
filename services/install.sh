@@ -170,7 +170,7 @@ do_install() {
     echo -e "${CYAN}These will be written to ${CONF_FILE}.${NC}"
     echo
 
-    ask         API_URL  "Allsky Map API URL (e.g. https://map.example.com/api/ping)"
+    ask         MAP_SERVER_BASE "Allsky Map Server Base URL (e.g. https://map.example.com)"
     ask         API_KEY  "Your API Key (allsky_live_...)"
     ask         CAM_NAME "Camera name"
     ask_optional CAM_OWNER "Owner name/handle" ""
@@ -182,21 +182,20 @@ do_install() {
     # --- Validate all inputs before showing the summary ---
 
     # 1. Auto-fix missing URL schemes (turns bare hostnames into https:// URLs)
-    ensure_url_scheme API_URL
+    ensure_url_scheme MAP_SERVER_BASE
     ensure_url_scheme CAM_SITE
     ensure_url_scheme CAM_IMG
 
     # 2. Check URL formats are valid
-    validate_url "API URL"    "${API_URL}"
-    validate_url "Site URL"   "${CAM_SITE}"
-    validate_url "Image URL"  "${CAM_IMG}"
+    validate_url "Map Server Base URL" "${MAP_SERVER_BASE}"
+    validate_url "Site URL"            "${CAM_SITE}"
+    validate_url "Image URL"           "${CAM_IMG}"
 
-    # 3. API URL should end with /api/ping
-    if [[ ! "${API_URL}" =~ /api/ping$ ]]; then
-        warn "API URL '${API_URL}' doesn't end with /api/ping — are you sure it's correct?"
-        read -rp "$(echo -e "${BOLD}Continue anyway? [y/N]: ${NC}")" yn
-        [[ "${yn,,}" == "y" ]] || die "Aborted."
-    fi
+    # 3. Clean and build the API URL
+    MAP_SERVER_BASE="${MAP_SERVER_BASE%/}"
+    MAP_SERVER_BASE="${MAP_SERVER_BASE%/api/ping}"
+    MAP_SERVER_BASE="${MAP_SERVER_BASE%/}"
+    API_URL="${MAP_SERVER_BASE}/api/ping"
 
     # 4. API key format: must start with allsky_live_ followed by a UUID
     if [[ ! "${API_KEY}" =~ ^allsky_live_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
@@ -322,15 +321,17 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Entry point (only executed when run directly, not when sourced)
 # ---------------------------------------------------------------------------
-require_root
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    require_root
 
-case "${1:-}" in
-    --uninstall|-u) uninstall ;;
-    --help|-h)
-        echo "Usage: sudo bash $0             # install"
-        echo "       sudo bash $0 --uninstall # remove"
-        ;;
-    *) do_install ;;
-esac
+    case "${1:-}" in
+        --uninstall|-u) uninstall ;;
+        --help|-h)
+            echo "Usage: sudo bash $0             # install"
+            echo "       sudo bash $0 --uninstall # remove"
+            ;;
+        *) do_install ;;
+    esac
+fi
