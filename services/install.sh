@@ -76,6 +76,44 @@ ask_optional() {
 }
 
 # ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+# Ensure a URL has a scheme; auto-prepend https:// if missing.
+# Skips empty strings (optional fields).
+ensure_url_scheme() {
+    local var="$1" val
+    val="${!var}"
+    [[ -z "${val}" ]] && return 0
+    if [[ ! "${val}" =~ ^https?:// ]]; then
+        warn "'${val}' has no scheme — prepending 'https://'."
+        printf -v "${var}" 'https://%s' "${val}"
+    fi
+}
+
+# Validate that a (non-empty) string looks like a URL.
+# Requires a scheme and at least one dot in the hostname.
+validate_url() {
+    local label="$1" val="$2"
+    [[ -z "${val}" ]] && return 0
+    if [[ ! "${val}" =~ ^https?://[^/]+\.[^/] ]]; then
+        die "${label} '${val}' does not look like a valid URL (expected https://hostname/...)."
+    fi
+}
+
+# Validate that a value is a decimal number within [min, max].
+validate_coord() {
+    local label="$1" val="$2" min="$3" max="$4"
+    if [[ ! "${val}" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+        die "${label} '${val}' is not a valid decimal number."
+    fi
+    if ! awk -v v="${val}" -v lo="${min}" -v hi="${max}" \
+         'BEGIN { exit !(v >= lo && v <= hi) }'; then
+        die "${label} '${val}' is out of range [${min}, ${max}]."
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Uninstall
 # ---------------------------------------------------------------------------
 uninstall() {
@@ -105,6 +143,8 @@ uninstall() {
     echo
     warn "Configuration at ${CONF_DIR}/ was NOT removed (it contains your API key)."
     warn "Remove it manually with:  sudo rm -rf ${CONF_DIR}"
+    warn "System user 'allsky-map' was NOT removed."
+    warn "Remove it manually with:  sudo userdel allsky-map"
     echo
     success "Uninstall complete."
 }
@@ -112,7 +152,7 @@ uninstall() {
 # ---------------------------------------------------------------------------
 # Main install flow
 # ---------------------------------------------------------------------------
-install() {
+do_install() {
     echo
     echo -e "${BOLD}================================================${NC}"
     echo -e "${BOLD}  Indi-Allsky Map Ping Client — Installer${NC}"
@@ -139,12 +179,41 @@ install() {
     ask_optional CAM_SITE  "Camera website URL (optional)" ""
     ask_optional CAM_IMG   "Live image URL (optional)" ""
 
-    # Basic validation
-    if [[ ! "${API_KEY}" =~ ^allsky_live_ ]]; then
-        warn "API key does not start with 'allsky_live_' — make sure you copied it from the registration page."
-        read -rp "Continue anyway? [y/N] " yn
+    # --- Validate all inputs before showing the summary ---
+
+    # 1. Auto-fix missing URL schemes (turns bare hostnames into https:// URLs)
+    ensure_url_scheme API_URL
+    ensure_url_scheme CAM_SITE
+    ensure_url_scheme CAM_IMG
+
+    # 2. Check URL formats are valid
+    validate_url "API URL"    "${API_URL}"
+    validate_url "Site URL"   "${CAM_SITE}"
+    validate_url "Image URL"  "${CAM_IMG}"
+
+    # 3. API URL should end with /api/ping
+    if [[ ! "${API_URL}" =~ /api/ping$ ]]; then
+        warn "API URL '${API_URL}' doesn't end with /api/ping — are you sure it's correct?"
+        read -rp "$(echo -e "${BOLD}Continue anyway? [y/N]: ${NC}")" yn
         [[ "${yn,,}" == "y" ]] || die "Aborted."
     fi
+
+    # 4. API key format: must start with allsky_live_ followed by a UUID
+    if [[ ! "${API_KEY}" =~ ^allsky_live_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        warn "API key '${API_KEY:0:20}...' doesn't match the expected format (allsky_live_<uuid>)."
+        warn "Make sure you copied it exactly from the registration page."
+        read -rp "$(echo -e "${BOLD}Continue anyway? [y/N]: ${NC}")" yn
+        [[ "${yn,,}" == "y" ]] || die "Aborted."
+    fi
+
+    # 5. Camera name length
+    if [[ ${#CAM_NAME} -gt 100 ]]; then
+        die "Camera name is too long (${#CAM_NAME} chars) — maximum is 100."
+    fi
+
+    # 6. Coordinate ranges
+    validate_coord "Latitude"  "${CAM_LAT}" -90  90
+    validate_coord "Longitude" "${CAM_LNG}" -180 180
 
     echo
     echo -e "${BOLD}--- Summary ---${NC}"
@@ -160,12 +229,21 @@ install() {
     [[ "${confirm,,}" != "n" ]] || { info "Aborted."; exit 0; }
     echo
 
-    # --- 1. Install the script ---
+    # --- 1. Create dedicated system user (idempotent) ---
+    info "Creating system user 'allsky-map' (if not already present)..."
+    if ! id -u allsky-map &>/dev/null; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin --user-group allsky-map
+        success "System user 'allsky-map' created."
+    else
+        success "System user 'allsky-map' already exists — skipping."
+    fi
+
+    # --- 2. Install the script ---
     info "Installing ${SCRIPT_NAME} to ${INSTALL_BIN}..."
     install -m 0755 "${SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_BIN}"
     success "Script installed."
 
-    # --- 2. Write config ---
+    # --- 3. Write config ---
     info "Creating configuration at ${CONF_FILE}..."
     mkdir -p "${CONF_DIR}"
 
@@ -180,7 +258,7 @@ install() {
 # ==============================================================================
 # Indi-Allsky Map Ping Client — Configuration
 # Generated by install.sh on $(date)
-# Permissions restricted to root only (chmod 600).
+# Permissions: root:allsky-map 640 (service user can read, world cannot).
 # ==============================================================================
 
 API_URL="${API_URL}"
@@ -194,22 +272,23 @@ CAMERA_SITE_URL="${CAM_SITE}"
 CAMERA_IMAGE_URL="${CAM_IMG}"
 EOF
 
-    chmod 600 "${CONF_FILE}"
-    success "Config written and permissions set to 600."
+    chown root:allsky-map "${CONF_FILE}"
+    chmod 640 "${CONF_FILE}"
+    success "Config written (root:allsky-map 640 — service user can read, world cannot)."
 
-    # --- 3. Install systemd units ---
+    # --- 4. Install systemd units ---
     info "Installing systemd units..."
     install -m 0644 "${SCRIPT_DIR}/${SCRIPT_NAME}.service" "${SERVICE_FILE}"
     install -m 0644 "${SCRIPT_DIR}/${SCRIPT_NAME}.timer"   "${TIMER_FILE}"
     success "Systemd units installed."
 
-    # --- 4. Enable and start ---
+    # --- 5. Enable and start ---
     info "Reloading systemd and enabling timer..."
     systemctl daemon-reload
     systemctl enable --now "${SCRIPT_NAME}.timer"
     success "Timer enabled and started."
 
-    # --- 5. Run immediately to verify ---
+    # --- 6. Run immediately to verify ---
     echo
     info "Running a test ping now to verify the configuration..."
     if systemctl start "${SCRIPT_NAME}.service"; then
@@ -253,5 +332,5 @@ case "${1:-}" in
         echo "Usage: sudo bash $0             # install"
         echo "       sudo bash $0 --uninstall # remove"
         ;;
-    *) install ;;
+    *) do_install ;;
 esac

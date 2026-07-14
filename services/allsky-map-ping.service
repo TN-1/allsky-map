@@ -8,9 +8,9 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/local/bin/allsky-map-ping
 EnvironmentFile=-/etc/allsky-map/ping.conf
-# Run under unprivileged user for security
-User=nobody
-Group=nobody
+# Dedicated unprivileged system user created by install.sh
+User=allsky-map
+Group=allsky-map
 # Sandboxing & Hardening options to restrict service permissions
 PrivateTmp=true
 ProtectSystem=strict
