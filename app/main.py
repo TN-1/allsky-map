@@ -289,8 +289,12 @@ async def get_camera_image(
     try:
         # Separate connect & read timeouts to prevent slow-loris attacks (ROB-02)
         timeout = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
+        # Use a realistic User-Agent to bypass Cloudflare / WAF bot-protection blocks
+        headers_dict = dict(headers)
+        headers_dict["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
         async with httpx.AsyncClient(timeout=timeout) as client:
-            res = await client.get(safe_url, headers=headers, extensions=extensions, follow_redirects=False)
+            res = await client.get(safe_url, headers=headers_dict, extensions=extensions, follow_redirects=False)
 
             # Handle one redirect hop, re-checking destination for SSRF (SEC-03)
             if res.status_code in (301, 302, 303, 307, 308):
@@ -304,7 +308,9 @@ async def get_camera_image(
                     logger.warning("SSRF blocked for camera %r on redirect: %s", camera_name, full_redirect_url)
                     return default_placeholder_image()
                 safe_redir_url, redir_headers, redir_ext = resolved_redir
-                res = await client.get(safe_redir_url, headers=redir_headers, extensions=redir_ext, follow_redirects=False)
+                redir_headers_dict = dict(redir_headers)
+                redir_headers_dict["User-Agent"] = headers_dict["User-Agent"]
+                res = await client.get(safe_redir_url, headers=redir_headers_dict, extensions=redir_ext, follow_redirects=False)
 
             if res.status_code != 200:
                 return default_placeholder_image()

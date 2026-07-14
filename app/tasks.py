@@ -47,9 +47,11 @@ async def _safe_head(client: httpx.AsyncClient, url: str, timeout: float = 5.0) 
     if not resolved:
         return False
     safe_url, headers, extensions = resolved
+    headers_dict = dict(headers)
+    headers_dict["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     try:
         # Use HEAD where possible to avoid downloading the full body
-        res = await client.head(safe_url, headers=headers, extensions=extensions, follow_redirects=False, timeout=timeout)
+        res = await client.head(safe_url, headers=headers_dict, extensions=extensions, follow_redirects=False, timeout=timeout)
         if res.status_code in (301, 302, 303, 307, 308):
             redirect = res.headers.get("location", "")
             if not redirect:
@@ -60,7 +62,9 @@ async def _safe_head(client: httpx.AsyncClient, url: str, timeout: float = 5.0) 
             if not resolved_redir:
                 return False
             safe_redir_url, redir_headers, redir_ext = resolved_redir
-            res = await client.head(safe_redir_url, headers=redir_headers, extensions=redir_ext, follow_redirects=False, timeout=timeout)
+            redir_headers_dict = dict(redir_headers)
+            redir_headers_dict["User-Agent"] = headers_dict["User-Agent"]
+            res = await client.head(safe_redir_url, headers=redir_headers_dict, extensions=redir_ext, follow_redirects=False, timeout=timeout)
         return res.status_code < 400
     except Exception:
         return False
@@ -72,8 +76,10 @@ async def _safe_get_image(client: httpx.AsyncClient, url: str, timeout: float = 
     if not resolved:
         return False
     safe_url, headers, extensions = resolved
+    headers_dict = dict(headers)
+    headers_dict["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     try:
-        res = await client.head(safe_url, headers=headers, extensions=extensions, follow_redirects=False, timeout=timeout)
+        res = await client.head(safe_url, headers=headers_dict, extensions=extensions, follow_redirects=False, timeout=timeout)
         if res.status_code in (301, 302, 303, 307, 308):
             redirect = res.headers.get("location", "")
             if not redirect:
@@ -84,7 +90,9 @@ async def _safe_get_image(client: httpx.AsyncClient, url: str, timeout: float = 
             if not resolved_redir:
                 return False
             safe_redir_url, redir_headers, redir_ext = resolved_redir
-            res = await client.head(safe_redir_url, headers=redir_headers, extensions=redir_ext, follow_redirects=False, timeout=timeout)
+            redir_headers_dict = dict(redir_headers)
+            redir_headers_dict["User-Agent"] = headers_dict["User-Agent"]
+            res = await client.head(safe_redir_url, headers=redir_headers_dict, extensions=redir_ext, follow_redirects=False, timeout=timeout)
         content_type = res.headers.get("content-type", "")
         return res.status_code < 400 and ("image" in content_type or not content_type)
     except Exception:
