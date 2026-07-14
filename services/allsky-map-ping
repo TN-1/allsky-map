@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""
+Indi-Allsky Map Ping Client Script
+This script pings the Allsky Map server API with camera status and metadata.
+It is designed to be executed periodically by a systemd timer.
+"""
+
+import json
+import os
+import sys
+import urllib.request
+import urllib.error
+
+def load_config():
+    # Start with environment variables (often populated by systemd's EnvironmentFile)
+    config = {
+        "API_URL": os.environ.get("API_URL"),
+        "API_KEY": os.environ.get("API_KEY"),
+        "CAMERA_NAME": os.environ.get("CAMERA_NAME"),
+        "CAMERA_OWNER": os.environ.get("CAMERA_OWNER", ""),
+        "CAMERA_LAT": os.environ.get("CAMERA_LAT"),
+        "CAMERA_LNG": os.environ.get("CAMERA_LNG"),
+        "CAMERA_SITE_URL": os.environ.get("CAMERA_SITE_URL", ""),
+        "CAMERA_IMAGE_URL": os.environ.get("CAMERA_IMAGE_URL", ""),
+    }
+
+    # If variables are not in the environment, try to read from configuration files
+    conf_paths = ["/etc/allsky-map/ping.conf", "./allsky-map-ping.conf", "./ping.conf"]
+    for path in conf_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        # Skip empty lines and comments
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip('"').strip("'")
+                            # Only overwrite if not already defined in environment
+                            if not config.get(k):
+                                config[k] = v
+                break
+            except Exception as e:
+                print(f"Warning: Failed to read config file {path}: {e}", file=sys.stderr)
+
+    return config
+
+def main():
+    config = load_config()
+
+    api_url = config.get("API_URL")
+    api_key = config.get("API_KEY")
+    name = config.get("CAMERA_NAME")
+
+    # Validate mandatory inputs
+    errors = []
+    if not api_url:
+        errors.append("API_URL is missing")
+    if not api_key:
+        errors.append("API_KEY is missing")
+    if not name:
+        errors.append("CAMERA_NAME is missing")
+
+    if errors:
+        print("Error: Invalid configuration:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        print("\nPlease check your environment variables or configuration file.", file=sys.stderr)
+        sys.exit(1)
+
+    # Safely convert latitude and longitude to floats
+    try:
+        lat = float(config.get("CAMERA_LAT")) if config.get("CAMERA_LAT") else 0.0
+    except ValueError:
+        print(f"Warning: Invalid CAMERA_LAT '{config.get('CAMERA_LAT')}', using 0.0", file=sys.stderr)
+        lat = 0.0
+
+    try:
+        lng = float(config.get("CAMERA_LNG")) if config.get("CAMERA_LNG") else 0.0
+    except ValueError:
+        print(f"Warning: Invalid CAMERA_LNG '{config.get('CAMERA_LNG')}', using 0.0", file=sys.stderr)
+        lng = 0.0
+
+    # Build the payload according to API specifications
+    payload = {
+        "name": name,
+        "owner": config.get("CAMERA_OWNER"),
+        "lat": lat,
+        "lng": lng,
+        "siteUrl": config.get("CAMERA_SITE_URL"),
+        "imageUrl": config.get("CAMERA_IMAGE_URL"),
+    }
+
+    data = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": api_key,
+    }
+
+    req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
+
+    print(f"Pinging Allsky Map API at: {api_url}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res_body = response.read().decode("utf-8")
+            print(f"Success! Server response: {res_body}")
+    except urllib.error.HTTPError as e:
+        # Invalid API key or request error: this is a client configuration or validation issue
+        print(f"HTTP Error {e.code}: {e.read().decode('utf-8')}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        # Network connectivity issue (e.g. temporary offline status, DNS failures)
+        # Log a warning but exit 0 to prevent systemd-timer from registering a service failure
+        print(f"Network Warning: Offline or unreachable ({e.reason})", file=sys.stderr)
+        sys.exit(0)
+    except Exception as e:
+        print(f"Unexpected Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

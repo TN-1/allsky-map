@@ -1,0 +1,259 @@
+/* Core Layout Adjustments */
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+#map {
+    height: 100%;
+    width: 100%;
+}
+
+/* Custom Marker Icon Override */
+.custom-marker-icon {
+    background: transparent !important;
+    border: none !important;
+}
+
+/* Styling for Error image replacement card */
+.allsky-img-err {
+    width: 100%;
+    height: 120px;
+    margin-top: 8px;
+    border-radius: 8px;
+    background: var(--color-base-300, #2c3e50);
+    color: var(--color-base-content, #bdc3c7);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-base-300, #34495e);
+    opacity: 0.8;
+}
+
+.allsky-popup-img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 8px;
+    margin-top: 8px;
+    display: block;
+    background-color: #000; /* Placeholder while loading */
+}
+
+.leaflet-popup-content {
+    width: 250px !important; /* Set a consistent width for the popups */
+    margin: 12px !important;
+}
+
+/* Modern popup badges (online / offline) */
+.popup-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 5px;
+}
+
+.popup-badge.online {
+    background: rgba(46, 204, 113, 0.15);
+    color: #2ecc71;
+    border: 1px solid rgba(46, 204, 113, 0.3);
+}
+
+.popup-badge.offline {
+    background: rgba(149, 165, 166, 0.15);
+    color: #95a5a6;
+    border: 1px solid rgba(149, 165, 166, 0.3);
+}
+
+.popup-last-seen {
+    font-size: 11px;
+    opacity: 0.65;
+    margin-top: 5px;
+    font-style: italic;
+}
+
+/* ==========================================================
+   Leaflet Theme Integrations (unifying styling with DaisyUI)
+   ========================================================== */
+
+/* Zoom Control container */
+.leaflet-bar {
+    border: none !important;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+    border-radius: 12px !important;
+    overflow: hidden;
+}
+
+.leaflet-bar a {
+    width: 32px !important;
+    height: 32px !important;
+    line-height: 32px !important;
+    font-size: 16px !important;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+/* Toggle Control Panel */
+.leaflet-control-layers {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+    border-radius: 16px !important;
+    padding: 8px 12px !important;
+    font-family: inherit;
+    font-size: 12px !important;
+    font-weight: 600;
+}
+
+/* Layer Toggle switches (styled like DaisyUI Toggle) */
+.leaflet-control-layers-selector {
+    appearance: none;
+    width: 36px;
+    height: 18px;
+    background: var(--color-base-300, #cbd5e1);
+    border-radius: 18px;
+    position: relative;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    vertical-align: middle;
+    margin-right: 10px !important;
+}
+
+.leaflet-control-layers-selector:checked {
+    background: var(--color-success, #2ecc71);
+}
+
+.leaflet-control-layers-selector::before {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: var(--color-base-100, white);
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.leaflet-control-layers-selector:checked::before {
+    transform: translateX(18px);
+}
+
+.leaflet-control-layers-label {
+    display: flex;
+    align-items: center;
+    padding: 6px 0;
+    cursor: pointer;
+}
+
+/* Popup Bubble */
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3) !important;
+    border-radius: 12px !important;
+    font-family: inherit;
+}
+
+/* =========================================================================
+   Theme Adaptivity Rules (Listening to DaisyUI theme-controller state via :has)
+   ========================================================================= */
+
+/* --- DARK THEME (When the Sun/Moon Light-Mode checkbox is NOT checked) --- */
+
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-control-layers,
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-bar a {
+    background: rgba(30, 30, 36, 0.95) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-bar a {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-bar a:last-child {
+    border-bottom: none !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-bar a:hover {
+    background: var(--color-base-300, #2b2b36) !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-popup-content-wrapper,
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-popup-tip {
+    background: #1e1e24 !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-popup-close-button {
+    color: #a0a0b0 !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-control-attribution {
+    background: rgba(30, 30, 36, 0.8) !important;
+    color: rgba(255, 255, 255, 0.5) !important;
+    border-top-left-radius: 8px !important;
+    border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .leaflet-control-attribution a {
+    color: var(--color-primary, #60a5fa) !important;
+}
+
+
+/* --- LIGHT THEME (When the Sun/Moon Light-Mode checkbox IS checked) --- */
+
+html:has(.theme-controller[value=light]:checked) .leaflet-control-layers,
+html:has(.theme-controller[value=light]:checked) .leaflet-bar a {
+    background: rgba(255, 255, 255, 0.95) !important;
+    color: #1f2937 !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .leaflet-bar a {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .leaflet-bar a:last-child {
+    border-bottom: none !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .leaflet-bar a:hover {
+    background: #f3f4f6 !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .leaflet-popup-content-wrapper,
+html:has(.theme-controller[value=light]:checked) .leaflet-popup-tip {
+    background: #ffffff !important;
+    color: #1f2937 !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .leaflet-popup-close-button {
+    color: #9ca3af !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .leaflet-control-attribution {
+    background: rgba(255, 255, 255, 0.8) !important;
+    color: rgba(0, 0, 0, 0.6) !important;
+    border-top-left-radius: 8px !important;
+    border-left: 1px solid rgba(0, 0, 0, 0.08) !important;
+    border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .leaflet-control-attribution a {
+    color: var(--color-primary, #3b82f6) !important;
+}
+
+/* CSS customization for Leaflet Terminator day-night shadow */
+.leaflet-interactive[fill-opacity] {
+    transition: fill-opacity 0.5s ease;
+}

@@ -1,0 +1,26 @@
+[Unit]
+Description=Indi-Allsky Map Ping Client Service
+Documentation=https://github.com/aaronwmorris/indi-allsky
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/allsky-map-ping
+EnvironmentFile=-/etc/allsky-map/ping.conf
+# Run under unprivileged user for security
+User=nobody
+Group=nobody
+# Sandboxing & Hardening options to restrict service permissions
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=
+NoNewPrivileges=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=

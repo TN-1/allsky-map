@@ -1,0 +1,18 @@
+[Unit]
+Description=Run Indi-Allsky Map Ping Client periodically
+Documentation=https://github.com/aaronwmorris/indi-allsky
+
+[Timer]
+# Run 2 minutes after system boot
+OnBootSec=2min
+# Run every 10 minutes thereafter
+OnUnitActiveSec=10min
+# Help distribute load on the server by introducing a random jitter of up to 1 minute
+RandomizedDelaySec=60
+# Keep the system from waking up CPU unnecessarily
+AccuracySec=5m
+# Trigger missed runs immediately if the machine was offline or suspended
+Persistent=true
+
+[Install]
+WantedBy=timers.target

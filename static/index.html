@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full w-full">
+	<head>
+		<base target="_top">
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Indi-Allsky Map</title>
+		<link rel="shortcut icon" type="image/x-icon" href="images/favicon_128.png" />
+		
+		<!-- Vendor Assets (Self-hosted for security & offline reliability) -->
+		<link rel="stylesheet" href="vendor/leaflet.css" />
+		<script src="vendor/leaflet.js"></script>
+		<script src="vendor/L.Terminator.js"></script>
+		
+		<link rel="stylesheet" href="vendor/MarkerCluster.css" />
+		<link rel="stylesheet" href="vendor/MarkerCluster.Default.css" />
+		<script src="vendor/leaflet.markercluster.js"></script>
+		
+		<link href="vendor/daisyui.css" rel="stylesheet" type="text/css" />
+		<script src="vendor/tailwindcss-browser.js"></script>
+		
+		<link rel="stylesheet" href="style.css">
+		<script src="register.js" defer></script>
+		<script src="map.js" defer></script>
+	</head>
+	<body class="h-full w-full m-0 p-0 overflow-hidden bg-base-100 text-base-content font-sans">
+		<!-- Map view container -->
+		<div id="map" class="h-full w-full z-0"></div>
+
+		<!-- Top Right: unified Search + Theme Toggle join group -->
+		<div class="join absolute top-4 right-4 z-1000 shadow-xl bg-base-200/90 backdrop-blur-md border border-base-300 rounded-full overflow-hidden transition-all duration-300">
+			<!-- Search Icon + Input -->
+			<div class="flex items-center pl-4 bg-transparent">
+				<svg aria-hidden="true" class="w-4 h-4 text-base-content/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+				</svg>
+				<input type="text" id="search-input" placeholder="Search cameras by name, owner..." aria-label="Search cameras" class="input input-ghost border-none outline-none focus:outline-none focus:bg-transparent w-48 sm:w-64 md:w-80 h-10 pl-2 text-xs font-semibold text-base-content" />
+			</div>
+			
+			<!-- Divider -->
+			<div class="divider divider-horizontal m-0"></div>
+			
+			<!-- Sun/Moon Theme Swap Controller -->
+			<label class="swap swap-rotate btn btn-ghost btn-circle btn-sm h-10 w-10 text-base-content">
+				<!-- value="light" sets theme to light when checked; defaults to dark (html data-theme) when unchecked -->
+				<input type="checkbox" class="theme-controller" value="light" aria-label="Toggle theme" />
+				
+				<!-- sun icon (displayed when checked/light) -->
+				<svg aria-hidden="true" class="swap-on fill-current w-4 h-4 text-warning" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+					<path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4a1,1,0,0,0,1-1Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4a1,1,0,0,0,1,1ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29,1,1,0,0,0,0-1.41l-.71-.71A1,1,0,0,0,4.93,6.34Zm12,.29a1,1,0,0,0,.7-.29l.71-.71a1,1,0,1,0-1.41-1.41L17,5.64a1,1,0,0,0,0,1.41A1,1,0,0,0,17.66,7.34ZM21,11H20a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Zm-9,8a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V20a1,1,0,0,0-1-1ZM18.36,17A1,1,0,0,0,17,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,18.36,17ZM12,6a6,6,0,1,0,6,6A6,6,0,0,0,12,6Z"/>
+				</svg>
+				
+				<!-- moon icon (displayed when unchecked/dark) -->
+				<svg aria-hidden="true" class="swap-off fill-current w-4 h-4 text-primary" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+					<path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z"/>
+				</svg>
+			</label>
+		</div>
+
+		<!-- Bottom Left: Floating About/Info Trigger button overlay -->
+		<button id="about-btn" class="btn btn-neutral btn-sm shadow-xl absolute bottom-6 left-4 z-1000 rounded-full border border-base-300 bg-base-200/90 backdrop-blur-md text-base-content hover:bg-base-300 transition-all duration-300">
+			About / Info
+		</button>
+
+		<!-- DaisyUI Modal Component using HTML5 Dialog Element (recommended layout) -->
+		<dialog id="aboutModal" class="modal modal-middle backdrop-blur-sm">
+			<div class="modal-box bg-base-100 text-base-content border border-base-300 shadow-2xl max-w-lg p-6 rounded-2xl relative">
+				<!-- Top Right close button dialog trigger -->
+				<form method="dialog">
+					<button class="btn btn-sm btn-circle btn-ghost absolute right-4 top-4 text-base-content/60 hover:text-base-content transition-colors duration-200" aria-label="Close modal"><span aria-hidden="true">✕</span></button>
+				</form>
+				
+				<!-- Logo Container -->
+				<div class="flex justify-center mb-6">
+					<img src="images/logo_outline_full.png" alt="Indi-Allsky Logo" class="w-28 h-28 object-contain" />
+				</div>
+				
+				<h2 class="text-xl font-bold text-center mb-4 text-base-content">About Indi-Allsky Map</h2>
+				<p class="mb-3 text-sm text-base-content/90 leading-relaxed text-center">This is a community-driven map for <strong>indi-allsky</strong> camera systems.</p>
+				<p class="mb-6 text-sm text-base-content/85 leading-relaxed text-center">Cameras check in via an API, allowing users to see live sky conditions across the globe.</p>
+				
+				<div class="divider opacity-50 m-0 mb-4"></div>
+				
+				<div class="text-xs text-base-content/70 space-y-2">
+					<p class="text-center font-medium">Developed by @TN-1 and the Allsky Team.</p>
+					<p class="text-center">Data is provided by individual camera owners.</p>
+					<div class="flex justify-center gap-4 mt-3">
+						<a href="https://github.com/aaronwmorris/indi-allsky" target="_blank" rel="noopener noreferrer" class="link link-primary link-hover font-semibold">Visit GitHub Organization</a>
+						<a href="https://github.com/aaronwmorris/indi-allsky" target="_blank" rel="noopener noreferrer" class="link link-primary link-hover font-semibold">Map Repository</a>
+					</div>
+				</div>
+				
+				<div class="divider opacity-50 m-0 my-4"></div>
+				
+				<!-- Registration section styled in elevation container base-200 -->
+				<div id="registration-zone" class="bg-base-200 p-4 rounded-xl border border-base-300 shadow-inner">
+					<h3 class="font-bold text-sm mb-2 text-base-content">Add Your Camera</h3>
+					<p class="text-xs text-base-content/80 mb-4">Want to see your camera on the map? Generate a unique API key to get started.</p>
+					<button id="gen-key-btn" class="btn btn-success btn-sm w-full font-bold shadow-md hover:brightness-95 transition-all">Generate API Key</button>
+					
+					<!-- Docs Link under the button (always visible) -->
+					<div class="text-center mt-3">
+						<a href="https://github.com/aaronwmorris/indi-allsky" target="_blank" rel="noopener noreferrer" class="link link-primary link-hover text-xs font-semibold flex items-center justify-center gap-1">
+							<span aria-hidden="true">📖</span>
+							<span>Client Installation Guide</span>
+						</a>
+					</div>
+					
+					<div id="key-display-area" class="hidden mt-4">
+						<p class="text-xs mb-2 font-medium text-base-content/90">Copy this key into your <strong>indi-allsky</strong> configuration:</p>
+						<div class="join w-full shadow-md">
+							<code id="api-key-value" class="join-item bg-base-300 text-error font-mono text-xs px-3 py-2 flex-grow overflow-x-auto select-all rounded-l-lg border-y border-l border-base-300 flex items-center"></code>
+							<button id="copy-btn" class="btn btn-primary btn-sm join-item rounded-r-lg font-bold">Copy</button>
+						</div>
+						<p class="key-warning text-xs text-warning mt-2 font-semibold flex items-center gap-1">
+							<span>⚠️</span>
+							<span><strong>Note:</strong> Keep this key secret! It's your camera's unique ID.</span>
+						</p>
+					</div>
+				</div>
+			</div>
+			
+			<!-- Close backdrop (click outside to close modal) -->
+			<form method="dialog" class="modal-backdrop">
+				<button>close</button>
+			</form>
+		</dialog>
+	</body>
+</html>

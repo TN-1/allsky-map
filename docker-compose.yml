@@ -1,0 +1,207 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # Docker Socket Proxy — restricts what Traefik can see on the Docker API.
+  # Traefik only needs to READ container labels and receive container events.
+  # The proxy exposes ONLY those endpoints over TCP on an internal-only network,
+  # so a compromised Traefik process cannot launch containers, read env vars, etc.
+  # ---------------------------------------------------------------------------
+  socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
+    container_name: socket_proxy
+    restart: unless-stopped
+    security_opt:
+      - label=disable
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Permit only what Traefik needs for container-label discovery
+      CONTAINERS: 1   # GET /containers/* — read labels and IPs
+      EVENTS: 1       # GET /events      — react to container start/stop
+      NETWORKS: 1     # GET /networks    — resolve container network details
+      # Deny all write operations and everything else
+      POST: 0
+      DELETE: 0
+      PUT: 0
+      SERVICES: 0     # Swarm — not used
+      TASKS: 0        # Swarm — not used
+      SECRETS: 0      # Swarm — not used
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - proxy-net     # Only reachable by Traefik on this internal network
+
+  # ---------------------------------------------------------------------------
+  # Traefik reverse proxy
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:3@sha256:1cb3845d7a05e1473c9086351426597e911db49db382b6e4769f9b0744962ac8
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    depends_on:
+      - socket-proxy
+    environment:
+      # Force a modern Docker API version compatible with newer Docker Engines
+      - DOCKER_API_VERSION=1.41
+    command:
+      # Point Docker provider at the socket proxy instead of the raw socket
+      - "--providers.docker=true"
+      - "--providers.docker.endpoint=tcp://socket-proxy:2375"
+      - "--providers.docker.exposedbydefault=false"
+      # Define entrypoints for HTTP and HTTPS
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # Enable global HTTP -> HTTPS redirect
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # SSL Cert Management using Let's Encrypt (HTTP-01 challenge)
+      - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL:-admin@indi-allsky-map.org}"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+      # Disable Traefik dashboard and API entirely (prevents accidental exposure)
+      - "--api=false"
+      # Access logging — X-API-Key header is redacted to protect camera credentials
+      - "--accesslog=true"
+      - "--accesslog.fields.headers.defaultmode=drop"
+      - "--accesslog.fields.headers.names.X-API-Key=drop"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # The :z flag relabels the directory for SELinux compliance
+      - "./letsencrypt:/letsencrypt:z"
+    networks:
+      - proxy-net   # Reach socket-proxy
+      - web         # Reach app containers (error-pages, allsky-api)
+
+  # ---------------------------------------------------------------------------
+  # Custom error pages
+  # ---------------------------------------------------------------------------
+  error-pages:
+    image: ghcr.io/tarampampam/error-pages:3@sha256:b8ded6f847df91075429cf79cb9491bfd7d96de69936555498a2ff0614e003e4
+    container_name: error_pages
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - TEMPLATE_NAME=lost-in-space
+      - SEND_SAME_HTTP_CODE=true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.error-pages-service.loadbalancer.server.port=8080"
+
+      # Public Catch-All Router: Catches blocked public routes and shows a pretty 404
+      - "traefik.http.routers.error-pages-router.rule=Host(`${DOMAIN_NAME:-map.example.com}`)"
+      - "traefik.http.routers.error-pages-router.entrypoints=websecure"
+      - "traefik.http.routers.error-pages-router.tls=true"
+      - "traefik.http.routers.error-pages-router.tls.certresolver=myresolver"
+      - "traefik.http.routers.error-pages-router.priority=1"
+      - "traefik.http.routers.error-pages-router.service=error-pages-service"
+    networks:
+      - web
+
+  # ---------------------------------------------------------------------------
+  # Allsky Map API + frontend
+  # ---------------------------------------------------------------------------
+  allsky-api:
+    build:
+      context: .
+    container_name: allsky_map_server
+    restart: unless-stopped
+    # Explicit DNS for the running container — avoids dependence on the host's
+    # 127.0.0.53 stub resolver which is unreachable from Docker bridge networks.
+    dns:
+      - 1.1.1.1   # Cloudflare (primary)
+      - 8.8.8.8   # Google (fallback)
+    depends_on:
+      - error-pages
+    # Locked down: port 8000 is not exposed to the host at all.
+    # All access must go through Traefik (ports 80/443).
+    # read_only filesystem: prevents a compromised process from writing to container paths.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    environment:
+      - TZ=Australia/Adelaide # Keep logs in local time
+      - DATABASE_URL=sqlite:////app/data/allsky_map.db
+    volumes:
+      # Mount directory with SELinux compliant permissions flag :z
+      - "./data:/app/data:z"
+      - "./static:/app/static:z"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/cameras', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.allsky-api-service.loadbalancer.server.port=8000"
+
+      # Define the error interceptor middleware.
+      - "traefik.http.middlewares.pretty-errors.errors.status=400-599"
+      - "traefik.http.middlewares.pretty-errors.errors.service=error-pages-service@docker"
+      - "traefik.http.middlewares.pretty-errors.errors.query=/{status}.html"
+
+      # Local Router: Serves the full map (including key registration) on https://localhost
+      - "traefik.http.routers.allsky-api-local.rule=Host(`localhost`)"
+      - "traefik.http.routers.allsky-api-local.entrypoints=websecure"
+      - "traefik.http.routers.allsky-api-local.tls=true"
+      - "traefik.http.routers.allsky-api-local.priority=10"
+      - "traefik.http.routers.allsky-api-local.middlewares=pretty-errors@docker"
+
+      # Public Router: Serves the map, cameras, and ping, but BLOCKS /api/register
+      - "traefik.http.routers.allsky-api-public.rule=Host(`${DOMAIN_NAME:-map.example.com}`) && !Path(`/api/register`)"
+      - "traefik.http.routers.allsky-api-public.entrypoints=websecure"
+      - "traefik.http.routers.allsky-api-public.tls=true"
+      - "traefik.http.routers.allsky-api-public.tls.certresolver=myresolver"
+      - "traefik.http.routers.allsky-api-public.priority=100"
+      - "traefik.http.routers.allsky-api-public.middlewares=pretty-errors@docker"
+    networks:
+      - web
+
+# ---------------------------------------------------------------------------
+# Named networks
+# proxy-net: internal-only, connects socket-proxy <-> traefik only
+# web:       connects traefik <-> app containers
+# ---------------------------------------------------------------------------
+networks:
+  proxy-net:
+    internal: true   # No outbound internet routing — socket-proxy is fully isolated
+  web:
+    driver: bridge
