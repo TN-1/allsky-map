@@ -122,8 +122,9 @@ async def check_dead_links() -> None:
                 async def check_camera(api_key: str, site_url: str | None, image_url: str | None):
                     async with sem:
                         site_valid  = await _safe_head(client, site_url)     if site_url  else True
-                        image_valid = await _safe_get_image(client, image_url) if image_url else True
+                        image_valid = True if image_url == "local" else (await _safe_get_image(client, image_url) if image_url else True)
                         results.append((api_key, site_valid, image_valid))
+
 
                 await asyncio.gather(*(check_camera(*c) for c in cameras))
 

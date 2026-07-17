@@ -75,9 +75,9 @@ class CameraPing(BaseModel):
     lat: float = Field(..., ge=-90.0, le=90.0)
     lng: float = Field(..., ge=-180.0, le=180.0)
     site_url: str = Field("", max_length=2000)
-    image_url: str = Field("", max_length=2000)
+    image_base64: str = Field(..., description="Base64 encoded image content")
 
-    @field_validator("site_url", "image_url")
+    @field_validator("site_url")
     @classmethod
     def validate_url(cls, v: str) -> str:
         if not v:
@@ -85,3 +85,5 @@ class CameraPing(BaseModel):
         if not URL_REGEX.match(v):
             raise ValueError("Must be a valid HTTP or HTTPS URL")
         return v
+
+

@@ -21,8 +21,10 @@ def load_config():
         "CAMERA_LAT": os.environ.get("CAMERA_LAT"),
         "CAMERA_LNG": os.environ.get("CAMERA_LNG"),
         "CAMERA_SITE_URL": os.environ.get("CAMERA_SITE_URL", ""),
-        "CAMERA_IMAGE_URL": os.environ.get("CAMERA_IMAGE_URL", ""),
+        "CAMERA_IMAGE_PATH": os.environ.get("CAMERA_IMAGE_PATH", ""),
     }
+
+
 
     # If variables are not in the environment, try to read from configuration files
     conf_paths = ["/etc/allsky-map/ping.conf", "./allsky-map-ping.conf", "./ping.conf"]
@@ -84,6 +86,40 @@ def main():
         print(f"Warning: Invalid CAMERA_LNG '{config.get('CAMERA_LNG')}', using 0.0", file=sys.stderr)
         lng = 0.0
 
+    image_path = config.get("CAMERA_IMAGE_PATH")
+    if not image_path:
+        flask_path = "/etc/indi-allsky/flask.json"
+        if os.path.exists(flask_path):
+            try:
+                with open(flask_path, "r") as f:
+                    flask_data = json.load(f)
+                folder = flask_data.get("INDI_ALLSKY_IMAGE_FOLDER")
+                if folder:
+                    image_path = os.path.join(folder, "latest.jpg")
+            except Exception as e:
+                print(f"Warning: Failed to parse {flask_path}: {e}", file=sys.stderr)
+
+    if not image_path:
+        print("Error: CAMERA_IMAGE_PATH is not configured, and could not be detected from flask.json.", file=sys.stderr)
+        print("Please configure CAMERA_IMAGE_PATH in your environment or ping.conf file.", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.exists(image_path):
+        print(f"Error: Local image file {image_path} does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        import base64
+        with open(image_path, "rb") as f:
+            img_data = f.read()
+        if len(img_data) > 5 * 1024 * 1024:
+            print(f"Error: Local image file {image_path} is too large ({len(img_data)} bytes). Maximum size is 5MB.", file=sys.stderr)
+            sys.exit(1)
+        image_base64 = base64.b64encode(img_data).decode("utf-8")
+    except Exception as e:
+        print(f"Error: Failed to read local image file {image_path}: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Build the payload according to API specifications
     payload = {
         "name": name,
@@ -91,8 +127,9 @@ def main():
         "lat": lat,
         "lng": lng,
         "siteUrl": config.get("CAMERA_SITE_URL"),
-        "imageUrl": config.get("CAMERA_IMAGE_URL"),
+        "imageBase64": image_base64,
     }
+
 
     data = json.dumps(payload).encode("utf-8")
     headers = {

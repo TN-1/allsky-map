@@ -31,12 +31,12 @@ def test_camera_ping_schema_success():
         "lat": 10.0,
         "lng": 20.0,
         "siteUrl": "http://site.com",
-        "imageUrl": "https://site.com/img.jpg"
+        "imageBase64": "ZmFrZS1pbWFnZS1ieXRlcw=="
     }
     ping = CameraPing(**data)
     assert ping.name == "Cam"
     assert ping.site_url == "http://site.com"
-    assert ping.image_url == "https://site.com/img.jpg"
+    assert ping.image_base64 == "ZmFrZS1pbWFnZS1ieXRlcw=="
 
 def test_camera_ping_schema_empty_urls():
     data = {
@@ -44,12 +44,13 @@ def test_camera_ping_schema_empty_urls():
         "lat": 10.0,
         "lng": 20.0,
         "siteUrl": "",
-        "imageUrl": ""
+        "imageBase64": "ZmFrZS1pbWFnZS1ieXRlcw=="
     }
     ping = CameraPing(**data)
     assert ping.site_url == ""
-    assert ping.image_url == ""
+    assert ping.image_base64 == "ZmFrZS1pbWFnZS1ieXRlcw=="
 
 def test_camera_ping_schema_invalid_url():
     with pytest.raises(ValidationError):
-        CameraPing(name="Cam", lat=10.0, lng=20.0, siteUrl="not-a-url")
+        CameraPing(name="Cam", lat=10.0, lng=20.0, siteUrl="not-a-url", imageBase64="ZmFrZS1pbWFnZS1ieXRlcw==")
+

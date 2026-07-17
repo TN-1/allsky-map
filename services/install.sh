@@ -177,19 +177,38 @@ do_install() {
     ask_optional CAM_LAT   "Latitude (decimal degrees, e.g. -34.92)" "0.0"
     ask_optional CAM_LNG   "Longitude (decimal degrees, e.g. 138.60)" "0.0"
     ask_optional CAM_SITE  "Camera website URL (optional)" ""
-    ask_optional CAM_IMG   "Live image URL (optional)" ""
+
+    # Check for /etc/indi-allsky/flask.json and extract image folder
+    local detected_folder=""
+    if [[ -f "/etc/indi-allsky/flask.json" ]]; then
+        detected_folder=$(python3 -c "import json; print(json.load(open('/etc/indi-allsky/flask.json')).get('INDI_ALLSKY_IMAGE_FOLDER', ''))" 2>/dev/null || true)
+    fi
+
+    if [[ -n "${detected_folder}" ]]; then
+        CAM_IMG_PATH="${detected_folder%/}/latest.jpg"
+        info "Detected Indi-Allsky image folder from flask.json: ${detected_folder}"
+        info "Using latest image path: ${CAM_IMG_PATH}"
+    else
+        ask CAM_IMG_FOLDER "Could not detect image folder from flask.json. Please enter your Indi-Allsky image folder path (e.g. /media/usb/allsky/images)"
+        CAM_IMG_PATH="${CAM_IMG_FOLDER%/}/latest.jpg"
+    fi
 
     # --- Validate all inputs before showing the summary ---
 
     # 1. Auto-fix missing URL schemes (turns bare hostnames into https:// URLs)
     ensure_url_scheme MAP_SERVER_BASE
     ensure_url_scheme CAM_SITE
-    ensure_url_scheme CAM_IMG
 
     # 2. Check URL formats are valid
     validate_url "Map Server Base URL" "${MAP_SERVER_BASE}"
     validate_url "Site URL"            "${CAM_SITE}"
-    validate_url "Image URL"           "${CAM_IMG}"
+
+    # Verify that the image directory exists
+    local img_dir
+    img_dir="$(dirname "${CAM_IMG_PATH}")"
+    if [[ ! -d "${img_dir}" ]]; then
+        warn "Image directory '${img_dir}' does not exist. Please make sure the path is correct."
+    fi
 
     # 3. Clean and build the API URL
     MAP_SERVER_BASE="${MAP_SERVER_BASE%/}"
@@ -222,11 +241,12 @@ do_install() {
     echo -e "  Owner:       ${CAM_OWNER:-<not set>}"
     echo -e "  Lat/Lng:     ${CAM_LAT} / ${CAM_LNG}"
     echo -e "  Site URL:    ${CAM_SITE:-<not set>}"
-    echo -e "  Image URL:   ${CAM_IMG:-<not set>}"
+    echo -e "  Image Path:  ${CAM_IMG_PATH}"
     echo
     read -rp "$(echo -e "${BOLD}Proceed with installation? [Y/n]: ${NC}")" confirm
     [[ "${confirm,,}" != "n" ]] || { info "Aborted."; exit 0; }
     echo
+
 
     # --- 1. Create dedicated system user (idempotent) ---
     info "Creating system user 'allsky-map' (if not already present)..."
@@ -236,6 +256,13 @@ do_install() {
     else
         success "System user 'allsky-map' already exists — skipping."
     fi
+
+    # Check if the system user 'allsky-map' has read permissions for the image file
+    if ! sudo -u allsky-map test -r "${CAM_IMG_PATH}" 2>/dev/null; then
+        warn "The system user 'allsky-map' may not have read permissions for '${CAM_IMG_PATH}'."
+        warn "Make sure the parent directories are executable (chmod +x) and the file is readable by 'allsky-map'."
+    fi
+
 
     # --- 2. Install the script ---
     info "Installing ${SCRIPT_NAME} to ${INSTALL_BIN}..."
@@ -268,7 +295,7 @@ CAMERA_OWNER="${CAM_OWNER}"
 CAMERA_LAT="${CAM_LAT}"
 CAMERA_LNG="${CAM_LNG}"
 CAMERA_SITE_URL="${CAM_SITE}"
-CAMERA_IMAGE_URL="${CAM_IMG}"
+CAMERA_IMAGE_PATH="${CAM_IMG_PATH}"
 EOF
 
     chown root:allsky-map "${CONF_FILE}"

@@ -154,7 +154,7 @@ def test_ping_camera_success():
         "lat": 1.23,
         "lng": 4.56,
         "siteUrl": "http://new.com",
-        "imageUrl": "http://new.com/img.jpg"
+        "imageBase64": "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="
     }
     response = client.post(
         "/api/ping",
@@ -172,7 +172,7 @@ def test_ping_camera_success():
     assert cam_db.lat == 1.23
     assert cam_db.lng == 4.56
     assert cam_db.site_url == "http://new.com"
-    assert cam_db.image_url == "http://new.com/img.jpg"
+    assert cam_db.image_url == "local"
     assert cam_db.status == "online"
     db.close()
 
@@ -197,7 +197,7 @@ def test_ping_camera_partial_fields_and_validation():
     # 1. Invalid payload: missing name (required)
     response = client.post(
         "/api/ping",
-        json={"lat": 1.0, "lng": 2.0},
+        json={"lat": 1.0, "lng": 2.0, "imageBase64": "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="},
         headers={"X-API-Key": raw_key}
     )
     assert response.status_code == 422
@@ -205,7 +205,7 @@ def test_ping_camera_partial_fields_and_validation():
     # 2. Invalid payload: coordinate range validation (lat > 90)
     response = client.post(
         "/api/ping",
-        json={"name": "Cam", "lat": 95.0, "lng": 2.0},
+        json={"name": "Cam", "lat": 95.0, "lng": 2.0, "imageBase64": "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="},
         headers={"X-API-Key": raw_key}
     )
     assert response.status_code == 422
@@ -213,15 +213,15 @@ def test_ping_camera_partial_fields_and_validation():
     # 3. Invalid payload: url validation (siteUrl is not valid URL)
     response = client.post(
         "/api/ping",
-        json={"name": "Cam", "lat": 1.0, "lng": 2.0, "siteUrl": "invalid-url"},
+        json={"name": "Cam", "lat": 1.0, "lng": 2.0, "siteUrl": "invalid-url", "imageBase64": "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="},
         headers={"X-API-Key": raw_key}
     )
     assert response.status_code == 422
     
-    # 4. Valid partial payload: missing optional fields owner, siteUrl, imageUrl (should fallback to default "")
+    # 4. Valid partial payload: missing optional fields owner, siteUrl (should fallback to default "")
     response = client.post(
         "/api/ping",
-        json={"name": "New Name", "lat": 1.5, "lng": 2.5},
+        json={"name": "New Name", "lat": 1.5, "lng": 2.5, "imageBase64": "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="},
         headers={"X-API-Key": raw_key}
     )
     assert response.status_code == 200
@@ -231,12 +231,12 @@ def test_ping_camera_partial_fields_and_validation():
     assert cam_db.name == "New Name"
     assert cam_db.owner == ""
     assert cam_db.site_url == ""
-    assert cam_db.image_url == ""
+    assert cam_db.image_url == "local"
     db.close()
 
 def test_ping_camera_invalid_key():
     client = TestClient(app_module.app)
-    payload = {"name": "Test", "lat": 1.0, "lng": 2.0}
+    payload = {"name": "Test", "lat": 1.0, "lng": 2.0, "imageBase64": "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="}
     response = client.post(
         "/api/ping",
         json=payload,
@@ -261,8 +261,8 @@ def test_rate_limiting():
 def test_payload_limits():
     client = TestClient(app_module.app)
     
-    # Send a request body larger than 1MB
-    large_payload = "A" * (1024 * 1024 + 100)
+    # Send a request body larger than 5MB
+    large_payload = "A" * (5 * 1024 * 1024 + 100)
     response = client.post("/api/ping", content=large_payload, headers={"X-API-Key": "somekey", "Content-Type": "application/json"})
     assert response.status_code == 413
     assert response.json()["detail"] == "Request Entity Too Large"
@@ -341,79 +341,67 @@ def test_camera_widget():
     response = client.get("/api/cameras/NonExistent/widget")
     assert response.status_code == 404
 
-def test_camera_image_proxy(monkeypatch):
+def test_camera_image_local_serving(tmp_path, monkeypatch):
     db = TestSessionLocal()
-    # Cam1: valid link
-    cam1 = CameraDB(api_key="key1", name="Cam1", image_url="http://valid-site.com/cam1.jpg", image_url_valid=True)
-    # Cam2: invalid link
-    cam2 = CameraDB(api_key="key2", name="Cam2", image_url="http://invalid-site.com/cam2.jpg", image_url_valid=False)
-    # Cam3: empty image url
-    cam3 = CameraDB(api_key="key3", name="Cam3", image_url="")
-    # Cam4: valid image link but server returns 404
-    cam4 = CameraDB(api_key="key4", name="Cam4", image_url="http://not-found-site.com/cam4.jpg", image_url_valid=True)
-    db.add_all([cam1, cam2, cam3, cam4])
+    hashed_key = hashlib.sha256("local_key".encode("utf-8")).hexdigest()
+    cam = CameraDB(api_key=hashed_key, name="LocalCam", image_url="local", image_url_valid=True)
+    db.add(cam)
     db.commit()
     db.close()
 
+
+    monkeypatch.setattr(app_module, "base_dir", str(tmp_path))
+
     client = TestClient(app_module.app)
 
-    # Bypass SSRF DNS resolution for fake test hostnames
-    monkeypatch.setattr(app_module, "is_safe_url", lambda url: True)
+    # 1. Image file doesn't exist -> placeholder
+    response = client.get("/api/cameras/LocalCam/image")
+    assert response.status_code == 200
+    assert "Camera Feed Unavailable" in response.text
 
-    # Mock httpx.AsyncClient.get
-    async def mock_get(url, **kwargs):
-        res = MagicMock()
-        if "valid-site" in url:
-            res.status_code = 200
-            res.headers = {"content-type": "image/png"}
-            res.content = b"fake-image-bytes"
-        else:
-            res.status_code = 404
-            res.content = b""
-        return res
+    # 2. Upload image via ping
+    png_bytes = b"\x89PNG\r\n\x1a\nfake-png-data"
+    import base64
+    b64_png = base64.b64encode(png_bytes).decode("utf-8")
+    
+    payload = {
+        "name": "LocalCam",
+        "owner": "John",
+        "lat": 1.23,
+        "lng": 4.56,
+        "siteUrl": "http://site.com",
+        "imageBase64": b64_png
+    }
+    response = client.post(
+        "/api/ping",
+        json=payload,
+        headers={"X-API-Key": "local_key"}
+    )
+    assert response.status_code == 200
 
-    mock_async_client = MagicMock()
-    mock_async_client.__aenter__.return_value = MagicMock(get=mock_get)
-    monkeypatch.setattr(app_module.httpx, "AsyncClient", lambda *args, **kwargs: mock_async_client)
-
-    # 1. Success case
-    response = client.get("/api/cameras/Cam1/image")
+    # 3. Retrieve image -> should serve the png content we uploaded
+    response = client.get("/api/cameras/LocalCam/image")
     assert response.status_code == 200
     assert response.headers["Content-Type"] == "image/png"
-    assert response.content == b"fake-image-bytes"
+    assert response.content == png_bytes
 
-    # 2. Invalid image link -> returns SVG placeholder
-    response = client.get("/api/cameras/Cam2/image")
+    # 4. Upload JPEG image
+    jpeg_bytes = b"\xff\xd8\xfffake-jpeg-data"
+    b64_jpeg = base64.b64encode(jpeg_bytes).decode("utf-8")
+    payload["imageBase64"] = b64_jpeg
+    response = client.post(
+        "/api/ping",
+        json=payload,
+        headers={"X-API-Key": "local_key"}
+    )
     assert response.status_code == 200
-    assert response.headers["Content-Type"] == "image/svg+xml"
-    assert "Camera Feed Unavailable" in response.text
 
-    # 3. Empty image link -> returns SVG placeholder
-    response = client.get("/api/cameras/Cam3/image")
+    # Retrieve image -> should serve the jpeg
+    response = client.get("/api/cameras/LocalCam/image")
     assert response.status_code == 200
-    assert response.headers["Content-Type"] == "image/svg+xml"
-    assert "Camera Feed Unavailable" in response.text
+    assert response.headers["Content-Type"] == "image/jpeg"
+    assert response.content == jpeg_bytes
 
-    # 4. Camera not found -> returns placeholder
-    response = client.get("/api/cameras/NonExistent/image")
-    assert response.status_code == 200
-    assert "Camera Feed Unavailable" in response.text
-
-    # 5. Proxy returns 404 status -> returns placeholder
-    response = client.get("/api/cameras/Cam4/image")
-    assert response.status_code == 200
-    assert "Camera Feed Unavailable" in response.text
-
-    # 6. Network exception during fetch -> returns placeholder
-    async def mock_get_error(url, **kwargs):
-        raise Exception("Network timeout")
-    mock_async_client_error = MagicMock()
-    mock_async_client_error.__aenter__.return_value = MagicMock(get=mock_get_error)
-    monkeypatch.setattr(app_module.httpx, "AsyncClient", lambda *args, **kwargs: mock_async_client_error)
-
-    response = client.get("/api/cameras/Cam1/image")
-    assert response.status_code == 200
-    assert "Camera Feed Unavailable" in response.text
 
 def test_migration_exception(monkeypatch, capsys):
     from app.main import run_migrations, engine
@@ -568,187 +556,81 @@ def test_ping_oversized_api_key():
     oversized_key = "allsky_live_" + "A" * (app_module.MAX_API_KEY_LEN + 1)
     response = client.post(
         "/api/ping",
-        json={"name": "Test", "lat": 0.0, "lng": 0.0},
+        json={"name": "Test", "lat": 0.0, "lng": 0.0, "imageBase64": "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="},
         headers={"X-API-Key": oversized_key},
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid API Key"
 
 
+
 # ---------------------------------------------------------------------------
-# Image proxy — remaining paths (lines 283-284, 292-295, 304, 309)
+# Local Image serving validation & cleanup tests
 # ---------------------------------------------------------------------------
 
-def test_image_proxy_ssrf_blocked(monkeypatch):
-    """is_safe_url returns False → placeholder (lines 283-284)."""
+def test_camera_image_local_validation_and_cleanup(tmp_path, monkeypatch):
     db = TestSessionLocal()
-    cam = CameraDB(api_key="ssrf_key", name="SSRFCam",
-                   image_url="http://internal.host/cam.jpg", image_url_valid=True)
+    hashed_key = hashlib.sha256("validation_key".encode("utf-8")).hexdigest()
+    cam = CameraDB(api_key=hashed_key, name="ValidationCam", image_url="local", image_url_valid=True)
     db.add(cam)
     db.commit()
     db.close()
 
-    # SSRF guard blocks this URL
-    monkeypatch.setattr(app_module, "is_safe_url", lambda url: False)
 
+    monkeypatch.setattr(app_module, "base_dir", str(tmp_path))
     client = TestClient(app_module.app)
-    response = client.get("/api/cameras/SSRFCam/image")
-    assert response.status_code == 200
-    assert "Camera Feed Unavailable" in response.text
+
+    # 1. Invalid base64 -> 400
+    payload = {
+        "name": "ValidationCam",
+        "lat": 1.23,
+        "lng": 4.56,
+        "imageBase64": "not-valid-base64-!"
+    }
+    response = client.post(
+        "/api/ping",
+        json=payload,
+        headers={"X-API-Key": "validation_key"}
+    )
+    assert response.status_code == 400
+    assert "Invalid base64 encoding" in response.json()["detail"]
+
+    # 2. Invalid image format -> 400
+    payload["imageBase64"] = "ZmFrZS1ub24taW1hZ2UtYnl0ZXM=" # "fake-non-image-bytes" in base64
+    response = client.post(
+        "/api/ping",
+        json=payload,
+        headers={"X-API-Key": "validation_key"}
+    )
+    assert response.status_code == 400
+    assert "Invalid or unsupported image format" in response.json()["detail"]
+
+    # 3. Name change with valid image
+    png_bytes = b"\x89PNG\r\n\x1a\nfake-png-data"
+    import base64
+    b64_png = base64.b64encode(png_bytes).decode("utf-8")
+    payload = {
+        "name": "ValidationCam",
+        "lat": 1.23,
+        "lng": 4.56,
+        "imageBase64": b64_png
+    }
+    # Upload first time with ValidationCam
+    client.post("/api/ping", json=payload, headers={"X-API-Key": "validation_key"})
+    
+    # Verify old file exists
+    old_hash = hashlib.sha256(b"ValidationCam").hexdigest()
+    old_path = tmp_path / "data" / "images" / f"{old_hash}.img"
+    assert old_path.exists()
+
+    # Rename cam in next ping
+    payload["name"] = "NewValidationCam"
+    client.post("/api/ping", json=payload, headers={"X-API-Key": "validation_key"})
+
+    # Verify old file is cleaned up, and new file exists
+    assert not old_path.exists()
+    new_hash = hashlib.sha256(b"NewValidationCam").hexdigest()
+    new_path = tmp_path / "data" / "images" / f"{new_hash}.img"
+    assert new_path.exists()
 
 
-def test_image_proxy_redirect_missing_location(monkeypatch):
-    """Redirect with no Location header → placeholder (lines 292-295)."""
-    db = TestSessionLocal()
-    cam = CameraDB(api_key="redir_key", name="RedirCam",
-                   image_url="http://example.com/cam.jpg", image_url_valid=True)
-    db.add(cam)
-    db.commit()
-    db.close()
-
-    monkeypatch.setattr(app_module, "is_safe_url", lambda url: True)
-
-    async def mock_get(url, **kwargs):
-        res = MagicMock()
-        res.status_code = 301
-        res.headers = {}  # no Location header
-        return res
-
-    mock_client = MagicMock()
-    mock_client.__aenter__.return_value = MagicMock(get=mock_get)
-    monkeypatch.setattr(app_module.httpx, "AsyncClient", lambda *a, **kw: mock_client)
-
-    client = TestClient(app_module.app)
-    response = client.get("/api/cameras/RedirCam/image")
-    assert response.status_code == 200
-    assert "Camera Feed Unavailable" in response.text
-
-
-def test_image_proxy_redirect_unsafe_location(monkeypatch):
-    """Redirect to unsafe URL → placeholder (lines 293-294)."""
-    db = TestSessionLocal()
-    cam = CameraDB(api_key="unsafe_redir_key", name="UnsafeRedirCam",
-                   image_url="http://example.com/cam.jpg", image_url_valid=True)
-    db.add(cam)
-    db.commit()
-    db.close()
-
-    # First call (original URL) passes; redirect destination is blocked
-    call_count = 0
-
-    def safe_url_selective(url):
-        nonlocal call_count
-        call_count += 1
-        return call_count == 1  # only first URL passes
-
-    monkeypatch.setattr(app_module, "is_safe_url", safe_url_selective)
-
-    async def mock_get(url, **kwargs):
-        res = MagicMock()
-        res.status_code = 301
-        res.headers = {"location": "http://internal.evil/cam.jpg"}
-        return res
-
-    mock_client = MagicMock()
-    mock_client.__aenter__.return_value = MagicMock(get=mock_get)
-    monkeypatch.setattr(app_module.httpx, "AsyncClient", lambda *a, **kw: mock_client)
-
-    client = TestClient(app_module.app)
-    response = client.get("/api/cameras/UnsafeRedirCam/image")
-    assert response.status_code == 200
-    assert "Camera Feed Unavailable" in response.text
-
-
-def test_image_proxy_redirect_follows_safe_url(monkeypatch):
-    """Redirect to safe destination → fetches destination and returns image (line 295)."""
-    db = TestSessionLocal()
-    cam = CameraDB(api_key="safe_redir_key", name="SafeRedirCam",
-                   image_url="http://example.com/cam.jpg", image_url_valid=True)
-    db.add(cam)
-    db.commit()
-    db.close()
-
-    monkeypatch.setattr(app_module, "is_safe_url", lambda url: True)
-
-    call_count = 0
-
-    async def mock_get(url, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        res = MagicMock()
-        if call_count == 1:
-            # First request: 301 redirect to safe destination
-            res.status_code = 301
-            res.headers = {"location": "http://cdn.example.com/cam.jpg"}
-        else:
-            # Second request (redirect destination): valid image
-            res.status_code = 200
-            res.headers = {"content-type": "image/jpeg"}
-            res.content = b"image-bytes-from-cdn"
-        return res
-
-    mock_client = MagicMock()
-    mock_client.__aenter__.return_value = MagicMock(get=mock_get)
-    monkeypatch.setattr(app_module.httpx, "AsyncClient", lambda *a, **kw: mock_client)
-
-    client = TestClient(app_module.app)
-    response = client.get("/api/cameras/SafeRedirCam/image")
-    assert response.status_code == 200
-    assert response.headers["Content-Type"] == "image/jpeg"
-    assert response.content == b"image-bytes-from-cdn"
-
-
-def test_image_proxy_wrong_content_type(monkeypatch):
-    """Non-image content-type → placeholder (line 304)."""
-    db = TestSessionLocal()
-    cam = CameraDB(api_key="ct_key", name="CTCam",
-                   image_url="http://example.com/cam.html", image_url_valid=True)
-    db.add(cam)
-    db.commit()
-    db.close()
-
-    monkeypatch.setattr(app_module, "is_safe_url", lambda url: True)
-
-    async def mock_get(url, **kwargs):
-        res = MagicMock()
-        res.status_code = 200
-        res.headers = {"content-type": "text/html; charset=utf-8"}
-        res.content = b"<html>not an image</html>"
-        return res
-
-    mock_client = MagicMock()
-    mock_client.__aenter__.return_value = MagicMock(get=mock_get)
-    monkeypatch.setattr(app_module.httpx, "AsyncClient", lambda *a, **kw: mock_client)
-
-    client = TestClient(app_module.app)
-    response = client.get("/api/cameras/CTCam/image")
-    assert response.status_code == 200
-    assert "Camera Feed Unavailable" in response.text
-
-
-def test_image_proxy_oversized_image(monkeypatch):
-    """Response body exceeds MAX_IMAGE_BYTES → placeholder (line 309)."""
-    db = TestSessionLocal()
-    cam = CameraDB(api_key="size_key", name="SizeCam",
-                   image_url="http://example.com/huge.jpg", image_url_valid=True)
-    db.add(cam)
-    db.commit()
-    db.close()
-
-    monkeypatch.setattr(app_module, "is_safe_url", lambda url: True)
-
-    async def mock_get(url, **kwargs):
-        res = MagicMock()
-        res.status_code = 200
-        res.headers = {"content-type": "image/jpeg"}
-        res.content = b"x" * (app_module.MAX_IMAGE_BYTES + 1)
-        return res
-
-    mock_client = MagicMock()
-    mock_client.__aenter__.return_value = MagicMock(get=mock_get)
-    monkeypatch.setattr(app_module.httpx, "AsyncClient", lambda *a, **kw: mock_client)
-
-    client = TestClient(app_module.app)
-    response = client.get("/api/cameras/SizeCam/image")
-    assert response.status_code == 200
-    assert "Camera Feed Unavailable" in response.text

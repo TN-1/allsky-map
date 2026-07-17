@@ -4,6 +4,7 @@ import json
 import io
 import urllib.request
 import urllib.error
+import builtins
 from unittest.mock import patch, MagicMock, mock_open
 import pytest
 
@@ -17,13 +18,32 @@ ping_client = importlib.util.module_from_spec(spec)
 sys.modules["allsky_map_ping"] = ping_client
 spec.loader.exec_module(ping_client)
 
+@pytest.fixture(autouse=True)
+def mock_image_setup(monkeypatch):
+    monkeypatch.setenv("CAMERA_IMAGE_PATH", "/fake/latest.jpg")
+    orig_exists = os.path.exists
+    def mock_exists(path):
+        if "latest.jpg" in str(path):
+            return True
+        if "flask.json" in str(path):
+            return False
+        return orig_exists(path)
+    monkeypatch.setattr(os.path, "exists", mock_exists)
+
+    orig_open = builtins.open
+    def mock_open_fn(file, mode="r", *args, **kwargs):
+        if "latest.jpg" in str(file):
+            return io.BytesIO(b"\xff\xd8\xfffake-image-bytes")
+        return orig_open(file, mode, *args, **kwargs)
+    monkeypatch.setattr(builtins, "open", mock_open_fn)
+
 def test_load_config_from_env(monkeypatch):
     monkeypatch.setenv("API_URL", "http://env-url")
     monkeypatch.setenv("API_KEY", "env-key")
     monkeypatch.setenv("CAMERA_NAME", "env-name")
     
     # Make sure we don't pick up actual local files
-    monkeypatch.setattr(os.path, "exists", lambda p: False)
+    monkeypatch.setattr(os.path, "exists", lambda p: True if "latest.jpg" in str(p) else False)
     
     config = ping_client.load_config()
     assert config["API_URL"] == "http://env-url"
@@ -32,7 +52,7 @@ def test_load_config_from_env(monkeypatch):
 
 def test_load_config_from_file(monkeypatch):
     # Clear environment variables
-    for var in ["API_URL", "API_KEY", "CAMERA_NAME", "CAMERA_OWNER", "CAMERA_LAT", "CAMERA_LNG", "CAMERA_SITE_URL", "CAMERA_IMAGE_URL"]:
+    for var in ["API_URL", "API_KEY", "CAMERA_NAME", "CAMERA_OWNER", "CAMERA_LAT", "CAMERA_LNG", "CAMERA_SITE_URL", "CAMERA_IMAGE_PATH"]:
         monkeypatch.delenv(var, raising=False)
         
     config_content = """
@@ -45,13 +65,13 @@ def test_load_config_from_file(monkeypatch):
     CAMERA_LAT = 12.34
     CAMERA_LNG = 56.78
     CAMERA_SITE_URL = http://site
-    CAMERA_IMAGE_URL = http://image
+    CAMERA_IMAGE_PATH = /fake/latest.jpg
     INVALID_LINE_WITHOUT_EQUALS
     """
     
     # We mock os.path.exists to return True only for the first matched path, say "/etc/allsky-map/ping.conf"
     def mock_exists(path):
-        return path == "/etc/allsky-map/ping.conf"
+        return path == "/etc/allsky-map/ping.conf" or "latest.jpg" in str(path)
         
     monkeypatch.setattr(os.path, "exists", mock_exists)
     
@@ -65,7 +85,7 @@ def test_load_config_from_file(monkeypatch):
     assert config["CAMERA_LAT"] == "12.34"
     assert config["CAMERA_LNG"] == "56.78"
     assert config["CAMERA_SITE_URL"] == "http://site"
-    assert config["CAMERA_IMAGE_URL"] == "http://image"
+    assert config["CAMERA_IMAGE_PATH"] == "/fake/latest.jpg"
 
 def test_load_config_env_priority(monkeypatch):
     monkeypatch.setenv("API_URL", "http://env-url")
@@ -78,7 +98,7 @@ def test_load_config_env_priority(monkeypatch):
     CAMERA_NAME = file-name
     """
     
-    monkeypatch.setattr(os.path, "exists", lambda p: p == "/etc/allsky-map/ping.conf")
+    monkeypatch.setattr(os.path, "exists", lambda p: p == "/etc/allsky-map/ping.conf" or "latest.jpg" in str(p))
     
     with patch("builtins.open", mock_open(read_data=config_content)):
         config = ping_client.load_config()
@@ -88,7 +108,7 @@ def test_load_config_env_priority(monkeypatch):
     assert config["CAMERA_NAME"] == "file-name"  # File fallback
 
 def test_load_config_file_exception(monkeypatch, capsys):
-    monkeypatch.setattr(os.path, "exists", lambda p: p == "./ping.conf")
+    monkeypatch.setattr(os.path, "exists", lambda p: p == "./ping.conf" or "latest.jpg" in str(p))
     
     # Mock open to raise an exception
     mock_open_error = MagicMock(side_effect=PermissionError("Permission denied"))
@@ -112,6 +132,7 @@ def test_main_missing_config(monkeypatch, capsys):
     assert "  - API_KEY is missing" in captured.err
     assert "  - CAMERA_NAME is missing" in captured.err
 
+
 def test_main_success(monkeypatch, capsys):
     config = {
         "API_URL": "http://test-api/ping",
@@ -121,7 +142,7 @@ def test_main_success(monkeypatch, capsys):
         "CAMERA_LAT": "12.34",
         "CAMERA_LNG": "56.78",
         "CAMERA_SITE_URL": "http://site",
-        "CAMERA_IMAGE_URL": "http://img"
+        "CAMERA_IMAGE_PATH": "/fake/latest.jpg"
     }
     monkeypatch.setattr(ping_client, "load_config", lambda: config)
     
@@ -144,7 +165,9 @@ def test_main_success(monkeypatch, capsys):
         assert sent_payload["lat"] == 12.34
         assert sent_payload["lng"] == 56.78
         assert sent_payload["siteUrl"] == "http://site"
-        assert sent_payload["imageUrl"] == "http://img"
+        assert "imageUrl" not in sent_payload
+        assert sent_payload["imageBase64"] == "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="
+
 
 def test_main_invalid_lat_lng(monkeypatch, capsys):
     config = {
@@ -153,6 +176,7 @@ def test_main_invalid_lat_lng(monkeypatch, capsys):
         "CAMERA_NAME": "Test Camera",
         "CAMERA_LAT": "invalid_lat",
         "CAMERA_LNG": "invalid_lng",
+        "CAMERA_IMAGE_PATH": "/fake/latest.jpg"
     }
     monkeypatch.setattr(ping_client, "load_config", lambda: config)
     
@@ -178,6 +202,7 @@ def test_main_missing_lat_lng(monkeypatch, capsys):
         "API_URL": "http://test-api/ping",
         "API_KEY": "test-key",
         "CAMERA_NAME": "Test Camera",
+        "CAMERA_IMAGE_PATH": "/fake/latest.jpg"
     }
     monkeypatch.setattr(ping_client, "load_config", lambda: config)
     
@@ -199,6 +224,7 @@ def test_main_http_error(monkeypatch, capsys):
         "API_URL": "http://test-api/ping",
         "API_KEY": "test-key",
         "CAMERA_NAME": "Test Camera",
+        "CAMERA_IMAGE_PATH": "/fake/latest.jpg"
     }
     monkeypatch.setattr(ping_client, "load_config", lambda: config)
     
@@ -218,6 +244,7 @@ def test_main_url_error(monkeypatch, capsys):
         "API_URL": "http://test-api/ping",
         "API_KEY": "test-key",
         "CAMERA_NAME": "Test Camera",
+        "CAMERA_IMAGE_PATH": "/fake/latest.jpg"
     }
     monkeypatch.setattr(ping_client, "load_config", lambda: config)
     
@@ -236,6 +263,7 @@ def test_main_unexpected_error(monkeypatch, capsys):
         "API_URL": "http://test-api/ping",
         "API_KEY": "test-key",
         "CAMERA_NAME": "Test Camera",
+        "CAMERA_IMAGE_PATH": "/fake/latest.jpg"
     }
     monkeypatch.setattr(ping_client, "load_config", lambda: config)
     
@@ -256,7 +284,7 @@ def test_ping_main_block(monkeypatch):
     monkeypatch.setenv("API_URL", "http://test")
     monkeypatch.setenv("API_KEY", "test")
     monkeypatch.setenv("CAMERA_NAME", "test")
-    monkeypatch.setattr(os.path, "exists", lambda p: False)
+    monkeypatch.setattr(os.path, "exists", lambda p: True if "latest.jpg" in str(p) else False)
     
     with patch("urllib.request.urlopen") as mock_urlopen:
         mock_response = MagicMock()
@@ -267,3 +295,4 @@ def test_ping_main_block(monkeypatch):
         runpy.run_path(os.path.abspath(os.path.join(os.path.dirname(__file__), "../services/allsky-map-ping")), run_name="__main__")
         
         assert mock_urlopen.call_count == 1
+

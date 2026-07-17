@@ -127,8 +127,8 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 # Hard limit on request body (covers Content-Length and chunked encoding)
-MAX_PAYLOAD_SIZE = 1024 * 1024  # 1 MB
-MAX_API_KEY_LEN  = 200          # allsky_live_<uuid> is 48 chars; generous headroom
+MAX_PAYLOAD_SIZE = 5 * 1024 * 1024  # 5 MB
+MAX_API_KEY_LEN  = 200              # allsky_live_<uuid> is 48 chars; generous headroom
 
 @app.middleware("http")
 async def limit_payload_size(request: Request, call_next):
@@ -225,16 +225,56 @@ async def update_camera(
     if not cam:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
+    old_name = cam.name
+
     cam.name      = data.name
     cam.owner     = data.owner
     cam.lat       = data.lat
     cam.lng       = data.lng
     cam.site_url  = data.site_url
-    cam.image_url = data.image_url
+
+    import base64
+    try:
+        decoded_image = base64.b64decode(data.image_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 encoding for image")
+    
+    # Verify content type
+    content_type = detect_image_type(decoded_image)
+    if not content_type or content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid or unsupported image format")
+
+    try:
+        hashed_name = hashlib.sha256(data.name.encode("utf-8")).hexdigest()
+        image_dir = os.path.join(base_dir, "data", "images")
+        os.makedirs(image_dir, exist_ok=True)
+        image_path = os.path.join(image_dir, f"{hashed_name}.img")
+        
+        with open(image_path, "wb") as f:
+            f.write(decoded_image)
+        
+        cam.image_url = "local"
+        cam.image_url_valid = True
+    except Exception as e:
+        logger.exception("Failed to save uploaded image: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to save image")
+    
+    # Clean up old file if name changed
+    if old_name and old_name != data.name:
+        try:
+            old_hash = hashlib.sha256(old_name.encode("utf-8")).hexdigest()
+            old_path = os.path.join(base_dir, "data", "images", f"{old_hash}.img")
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        except Exception:
+            pass
+
     cam.last_seen = datetime.now(timezone.utc)
     cam.status    = "online"
     db.commit()
     return {"message": "Success"}
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +284,17 @@ async def update_camera(
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_BYTES     = 10 * 1024 * 1024  # 10 MB
+
+def detect_image_type(data: bytes) -> str | None:
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    elif data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    elif data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    elif data.startswith(b"RIFF") and len(data) > 12 and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 def default_placeholder_image() -> Response:
     svg = (
@@ -262,8 +313,8 @@ def default_placeholder_image() -> Response:
 
 @app.get(
     "/api/cameras/{camera_name}/image",
-    summary="Proxy camera image",
-    description="Proxies the camera image to resolve CORS and mixed-content issues.",
+    summary="Get camera image",
+    description="Serves the locally uploaded camera image.",
 )
 async def get_camera_image(
     camera_name: str,
@@ -273,65 +324,24 @@ async def get_camera_image(
     await image_limiter.check(request)
 
     cam = db.query(CameraDB).filter(CameraDB.name == camera_name).first()
-    if not cam or not cam.image_url:
-        return default_placeholder_image()
-    if not getattr(cam, "image_url_valid", True):
+    if not cam:
         return default_placeholder_image()
 
-    # SSRF guard: resolve hostname asynchronously and validate IPs to prevent DNS rebinding (SEC-02)
-    resolved = await resolve_safe_url(cam.image_url)
-    if not resolved:
-        logger.warning("SSRF blocked for camera %r: %s", camera_name, cam.image_url)
-        return default_placeholder_image()
-
-    safe_url, headers, extensions = resolved
-
-    try:
-        # Separate connect & read timeouts to prevent slow-loris attacks (ROB-02)
-        timeout = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
-        # Use a realistic User-Agent to bypass Cloudflare / WAF bot-protection blocks
-        headers_dict = dict(headers)
-        headers_dict["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            res = await client.get(safe_url, headers=headers_dict, extensions=extensions, follow_redirects=False)
-
-            # Handle one redirect hop, re-checking destination for SSRF (SEC-03)
-            if res.status_code in (301, 302, 303, 307, 308):
-                redirect_url = res.headers.get("location", "")
-                if not redirect_url:
-                    return default_placeholder_image()
-                from urllib.parse import urljoin
-                full_redirect_url = urljoin(cam.image_url, redirect_url)
-                resolved_redir = await resolve_safe_url(full_redirect_url)
-                if not resolved_redir:
-                    logger.warning("SSRF blocked for camera %r on redirect: %s", camera_name, full_redirect_url)
-                    return default_placeholder_image()
-                safe_redir_url, redir_headers, redir_ext = resolved_redir
-                redir_headers_dict = dict(redir_headers)
-                redir_headers_dict["User-Agent"] = headers_dict["User-Agent"]
-                res = await client.get(safe_redir_url, headers=redir_headers_dict, extensions=redir_ext, follow_redirects=False)
-
-            if res.status_code != 200:
-                return default_placeholder_image()
-
-            # Whitelist Content-Type to prevent XSS-via-proxy
-            raw_ct = res.headers.get("content-type", "")
-            content_type = raw_ct.split(";")[0].strip().lower()
-            if content_type not in ALLOWED_IMAGE_TYPES:
-                return default_placeholder_image()
-
-            # Hard size cap to prevent memory exhaustion
-            content = res.content
-            if len(content) > MAX_IMAGE_BYTES:
-                return default_placeholder_image()
-
+    hashed_name = hashlib.sha256(camera_name.encode("utf-8")).hexdigest()
+    image_dir = os.path.join(base_dir, "data", "images")
+    image_path = os.path.join(image_dir, f"{hashed_name}.img")
+    if os.path.exists(image_path):
+        try:
+            with open(image_path, "rb") as f:
+                content = f.read()
+            content_type = detect_image_type(content) or "image/jpeg"
             return Response(content=content, media_type=content_type)
-
-    except Exception as exc:
-        logger.warning("Image proxy failed for camera %r: %s", camera_name, exc, exc_info=True)
+        except Exception as exc:
+            logger.warning("Failed to read local image for camera %r: %s", camera_name, exc)
+            return default_placeholder_image()
 
     return default_placeholder_image()
+
 
 
 # ---------------------------------------------------------------------------
