@@ -54,3 +54,24 @@ def test_camera_ping_schema_invalid_url():
     with pytest.raises(ValidationError):
         CameraPing(name="Cam", lat=10.0, lng=20.0, siteUrl="not-a-url", imageBase64="ZmFrZS1pbWFnZS1ieXRlcw==")
 
+def test_camera_response_last_seen_serialization():
+    from datetime import datetime, timezone
+    # 1. Timezone naive
+    dt_naive = datetime(2026, 7, 17, 6, 17)
+    res_naive = CameraResponse(
+        name="Cam", owner="Owner", lat=1.0, lng=2.0, site_url="http://site.com",
+        image_url="local", status="online", last_seen=dt_naive
+    )
+    dumped_naive = res_naive.model_dump()
+    assert "+00:00" in dumped_naive["last_seen"] or "Z" in dumped_naive["last_seen"]
+
+    # 2. Timezone aware
+    dt_aware = datetime(2026, 7, 17, 6, 17, tzinfo=timezone.utc)
+    res_aware = CameraResponse(
+        name="Cam", owner="Owner", lat=1.0, lng=2.0, site_url="http://site.com",
+        image_url="local", status="online", last_seen=dt_aware
+    )
+    dumped_aware = res_aware.model_dump()
+    assert "+00:00" in dumped_aware["last_seen"] or "Z" in dumped_aware["last_seen"]
+
+

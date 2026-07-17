@@ -1,5 +1,5 @@
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict, Field, field_validator, field_serializer, model_validator
 from pydantic.alias_generators import to_camel
 import re
@@ -47,7 +47,12 @@ class CameraResponse(BaseModel):
     # Format last_seen to ISO-8601 string or empty string
     @field_serializer("last_seen")
     def serialize_last_seen(self, val: Optional[datetime]) -> str:
-        return val.isoformat() if val else ""
+        if not val:
+            return ""
+        if val.tzinfo is None:
+            return val.replace(tzinfo=timezone.utc).isoformat()
+        return val.astimezone(timezone.utc).isoformat()
+
 
     # Model validator running after attribute loading to sanitize dead links
     @model_validator(mode="after")
