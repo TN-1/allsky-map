@@ -9,9 +9,9 @@ def test_ensure_url_scheme():
         res = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
         return res.stdout
 
-    assert test_val("srv1-vps.hamishwest.xyz") == "https://srv1-vps.hamishwest.xyz"
-    assert test_val("https://srv1-vps.hamishwest.xyz") == "https://srv1-vps.hamishwest.xyz"
-    assert test_val("http://srv1-vps.hamishwest.xyz") == "http://srv1-vps.hamishwest.xyz"
+    assert test_val("map.example.com") == "https://map.example.com"
+    assert test_val("https://map.example.com") == "https://map.example.com"
+    assert test_val("http://map.example.com") == "http://map.example.com"
     assert test_val("") == ""
 
 def test_validate_url():
@@ -20,7 +20,7 @@ def test_validate_url():
         res = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
         return res.returncode == 0
 
-    assert check_url("https://srv1-vps.hamishwest.xyz") is True
+    assert check_url("https://map.example.com") is True
     assert check_url("http://map.example.com") is True
     assert check_url("") is True  # empty is skipped
     assert check_url("localhost") is False

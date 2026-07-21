@@ -157,7 +157,7 @@ services:
         max-size: "20m"
         max-file: "5"
     environment:
-      - TZ=Australia/Adelaide # Keep logs in local time
+      - TZ=${TZ:-UTC}                # Set your local timezone in .env (e.g. TZ=Australia/Adelaide)
       - DATABASE_URL=sqlite:////app/data/allsky_map.db
     volumes:
       # Mount directory with SELinux compliant permissions flag :z

@@ -26,3 +26,8 @@ acme.json
 
 # Persistent data directory (SQLite database lives here at runtime)
 data/
+
+# AI Tooling (Antigravity / Gemini agent files)
+GEMINI.md
+skills-lock.json
+.agents/
