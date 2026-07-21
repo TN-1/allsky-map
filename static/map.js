@@ -12,7 +12,7 @@ const nightOverlay = L.terminator({
     fillOpacity: 0.5,
     color: '#000',
     weight: 0
-});
+}).addTo(map);
 
 // Create the single unified Marker Cluster Group
 const markerCluster = L.markerClusterGroup({
