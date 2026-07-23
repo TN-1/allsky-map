@@ -271,3 +271,45 @@ html:has(.theme-controller[value=light]:checked) .leaflet-control-attribution a 
 .live-pulse-dot {
     animation: live-fade-pulse 3s infinite ease-in-out;
 }
+
+/* Custom Refresh Option Button styling */
+.refresh-opt {
+    width: 100% !important;
+    text-align: left !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 8px 12px !important;
+    border-radius: 10px !important;
+    transition: all 0.15s ease !important;
+    font-weight: 600 !important;
+    color: var(--fallback-bc, currentColor) !important;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+}
+
+.refresh-opt:hover {
+    background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Light theme hover override */
+html:has(.theme-controller[value=light]:checked) .refresh-opt:hover {
+    background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+.refresh-opt.active-mode {
+    background-color: var(--color-primary, #3b82f6) !important;
+    color: var(--color-primary-content, #ffffff) !important;
+}
+
+/* Explicit solid background color for the dropdown menu */
+#refresh-dropdown .dropdown-content {
+    background-color: var(--color-base-200, #1d232a) !important;
+    opacity: 1 !important;
+}
+
+/* Light theme override */
+html:has(.theme-controller[value=light]:checked) #refresh-dropdown .dropdown-content {
+    background-color: var(--color-base-200, #f2f2f2) !important;
+}

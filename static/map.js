@@ -347,13 +347,22 @@ function setRefreshMode(mode) {
     currentRefreshMode = mode;
     localStorage.setItem('refresh-mode', mode);
 
-    // Update active class on dropdown buttons
+    // Update active class and checkmarks on dropdown buttons
     const opts = document.querySelectorAll('.refresh-opt');
     opts.forEach(opt => {
+        const check = opt.querySelector('.check-mark');
         if (opt.getAttribute('data-value') === mode) {
-            opt.classList.add('active');
+            opt.classList.add('active-mode');
+            if (check) {
+                check.classList.remove('opacity-0');
+                check.classList.add('opacity-100');
+            }
         } else {
-            opt.classList.remove('active');
+            opt.classList.remove('active-mode');
+            if (check) {
+                check.classList.remove('opacity-100');
+                check.classList.add('opacity-0');
+            }
         }
     });
 
