@@ -34,8 +34,36 @@
 				<svg aria-hidden="true" class="w-4 h-4 text-base-content/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 				</svg>
-				<input type="text" id="search-input" placeholder="Search cameras by name, owner..." aria-label="Search cameras" class="input input-ghost border-none outline-none focus:outline-none focus:bg-transparent w-48 sm:w-64 md:w-80 h-10 pl-2 text-xs font-semibold text-base-content" />
+				<input type="text" id="search-input" placeholder="Search cameras by name, owner..." aria-label="Search cameras" class="input input-ghost border-none outline-none focus:outline-none focus:bg-transparent w-28 sm:w-64 md:w-80 h-10 pl-2 text-xs font-semibold text-base-content" />
 			</div>
+			
+			<!-- Divider -->
+			<div class="divider divider-horizontal m-0"></div>
+
+			<!-- Refresh Button -->
+			<button id="refresh-btn" class="btn btn-ghost btn-circle btn-sm h-10 w-10 text-base-content" aria-label="Refresh map">
+				<svg id="refresh-icon" aria-hidden="true" class="w-4 h-4 fill-none stroke-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+				</svg>
+				<span id="refresh-spinner" class="loading loading-spinner loading-xs hidden"></span>
+			</button>
+			
+			<!-- Divider -->
+			<div class="divider divider-horizontal m-0"></div>
+
+			<!-- Refresh Mode Dropdown -->
+			<details id="refresh-dropdown" class="dropdown dropdown-bottom dropdown-end">
+				<summary id="refresh-summary" class="btn btn-ghost btn-sm h-10 text-xs font-semibold flex items-center gap-2 text-base-content border-none focus:outline-none normal-case" aria-haspopup="listbox" aria-label="Refresh Mode">
+					<span id="live-indicator" class="h-2 w-2 rounded-full bg-error live-pulse-dot flex"></span>
+					<span id="refresh-label">Live</span>
+				</summary>
+				<ul class="dropdown-content menu p-2 shadow-2xl bg-base-200 border border-base-300 rounded-box w-28 z-1000 text-xs font-semibold">
+					<li><button type="button" data-value="ws" class="refresh-opt active py-1.5 px-2">Live</button></li>
+					<li><button type="button" data-value="60" class="refresh-opt py-1.5 px-2">1 Min</button></li>
+					<li><button type="button" data-value="300" class="refresh-opt py-1.5 px-2">5 Mins</button></li>
+					<li><button type="button" data-value="manual" class="refresh-opt py-1.5 px-2">Manual</button></li>
+				</ul>
+			</details>
 			
 			<!-- Divider -->
 			<div class="divider divider-horizontal m-0"></div>

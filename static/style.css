@@ -257,3 +257,17 @@ html:has(.theme-controller[value=light]:checked) .leaflet-control-attribution a 
 .leaflet-interactive[fill-opacity] {
     transition: fill-opacity 0.5s ease;
 }
+
+/* Custom CSS fading pulse animation for Live indicator dot */
+@keyframes live-fade-pulse {
+    0%, 100% {
+        opacity: 0.15;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+.live-pulse-dot {
+    animation: live-fade-pulse 3s infinite ease-in-out;
+}

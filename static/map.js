@@ -202,14 +202,34 @@ function filterCameras() {
 }
 
 // Fetch camera data from the API and instantiate markers
-function loadCameras() {
-    fetch('/api/cameras')
+function loadCameras(silent = false) {
+    const refreshBtn = document.getElementById('refresh-btn');
+    const refreshIcon = document.getElementById('refresh-icon');
+    const refreshSpinner = document.getElementById('refresh-spinner');
+    
+    if (!silent && refreshBtn && refreshIcon && refreshSpinner) {
+        refreshBtn.disabled = true;
+        refreshIcon.classList.add('hidden');
+        refreshSpinner.classList.remove('hidden');
+    }
+    
+    // Remember which camera's popup is currently open
+    const openCam = allCameras.find(cam => cam.marker && cam.marker.isPopupOpen());
+    const openCamName = openCam ? openCam.name : null;
+    
+    return fetch('/api/cameras')
         .then(response => {
             if (!response.ok) throw new Error('Network response was not ok');
             return response.json();
         })
         .then(data => {
-            // Instantiate markers once during data load to cache and optimize filtering
+            // Remove old markers from cluster group to prevent duplicate visuals/memory issues
+            allCameras.forEach(cam => {
+                if (cam.marker) {
+                    markerCluster.removeLayer(cam.marker);
+                }
+            });
+            
             allCameras = data.map(cam => {
                 return {
                     ...cam,
@@ -217,14 +237,214 @@ function loadCameras() {
                 };
             });
             filterCameras();
+            
+            // Re-open the popup if it was open before
+            if (openCamName) {
+                const newOpenCam = allCameras.find(cam => cam.name === openCamName);
+                if (newOpenCam && newOpenCam.marker) {
+                    newOpenCam.marker.openPopup();
+                }
+            }
         })
-        .catch(err => console.error('Error loading cameras from API:', err));
+        .catch(err => console.error('Error loading cameras from API:', err))
+        .finally(() => {
+            if (!silent && refreshBtn && refreshIcon && refreshSpinner) {
+                // Keep the spinner visible for at least 300ms for a smoother UX
+                setTimeout(() => {
+                    refreshBtn.disabled = false;
+                    refreshSpinner.classList.add('hidden');
+                    refreshIcon.classList.remove('hidden');
+                }, 300);
+            }
+        });
+}
+
+// Dynamically update a camera entry or add a new one from live events
+function updateOrAddCamera(camData) {
+    const existingIdx = allCameras.findIndex(c => c.name === camData.name);
+    const marker = createMarker(camData);
+    const newCamEntry = {
+        ...camData,
+        marker: marker
+    };
+    
+    let popupWasOpen = false;
+    if (existingIdx !== -1) {
+        const oldCam = allCameras[existingIdx];
+        if (oldCam.marker) {
+            popupWasOpen = oldCam.marker.isPopupOpen();
+            markerCluster.removeLayer(oldCam.marker);
+        }
+        allCameras[existingIdx] = newCamEntry;
+    } else {
+        allCameras.push(newCamEntry);
+    }
+    
+    filterCameras();
+    
+    // If the popup was open on the old marker, open the new one immediately
+    if (popupWasOpen && marker) {
+        marker.openPopup();
+    }
+}
+
+// WebSocket connection state
+let socket = null;
+let reconnectTimer = null;
+
+function connectWebSocket() {
+    if (socket) {
+        try { socket.close(); } catch(_) {}
+        socket = null;
+    }
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/ws`;
+    
+    socket = new WebSocket(wsUrl);
+    
+    socket.onmessage = (event) => {
+        try {
+            const camData = JSON.parse(event.data);
+            if (camData && camData.name) {
+                updateOrAddCamera(camData);
+            }
+        } catch (e) {
+            console.error('Failed to parse WebSocket message:', e);
+        }
+    };
+    
+    socket.onclose = (event) => {
+        if (currentRefreshMode === 'ws') {
+            reconnectTimer = setTimeout(connectWebSocket, 5000);
+        }
+    };
+    
+    socket.onerror = (err) => {
+        console.error('WebSocket error:', err);
+    };
+}
+
+function disconnectWebSocket() {
+    if (socket) {
+        try { socket.close(); } catch(_) {}
+        socket = null;
+    }
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+}
+
+// Current selected refresh mode state
+let currentRefreshMode = 'ws';
+
+function setRefreshMode(mode) {
+    currentRefreshMode = mode;
+    localStorage.setItem('refresh-mode', mode);
+
+    // Update active class on dropdown buttons
+    const opts = document.querySelectorAll('.refresh-opt');
+    opts.forEach(opt => {
+        if (opt.getAttribute('data-value') === mode) {
+            opt.classList.add('active');
+        } else {
+            opt.classList.remove('active');
+        }
+    });
+
+    // Update the button label & pulsing red dot
+    const labelEl = document.getElementById('refresh-label');
+    const indicatorEl = document.getElementById('live-indicator');
+    
+    if (labelEl) {
+        if (mode === 'ws') {
+            labelEl.textContent = 'Live';
+        } else if (mode === '60') {
+            labelEl.textContent = '1 Min';
+        } else if (mode === '300') {
+            labelEl.textContent = '5 Mins';
+        } else if (mode === 'manual') {
+            labelEl.textContent = 'Manual';
+        }
+    }
+
+    if (indicatorEl) {
+        if (mode === 'ws') {
+            indicatorEl.classList.remove('hidden');
+            indicatorEl.classList.add('flex');
+        } else {
+            indicatorEl.classList.remove('flex');
+            indicatorEl.classList.add('hidden');
+        }
+    }
+
+    // Close the dropdown details element
+    const dropdown = document.getElementById('refresh-dropdown');
+    if (dropdown) {
+        dropdown.removeAttribute('open');
+    }
+
+    // Trigger update strategy
+    updateRefreshStrategy();
+}
+
+// Timer for active polling interval fallback
+let refreshIntervalTimer = null;
+
+function updateRefreshStrategy() {
+    if (refreshIntervalTimer) {
+        clearInterval(refreshIntervalTimer);
+        refreshIntervalTimer = null;
+    }
+    
+    const mode = currentRefreshMode;
+    
+    if (mode === 'ws') {
+        connectWebSocket();
+    } else {
+        disconnectWebSocket();
+        if (mode !== 'manual') {
+            const intervalSecs = parseInt(mode, 10);
+            if (!isNaN(intervalSecs)) {
+                refreshIntervalTimer = setInterval(() => {
+                    if (!document.hidden) {
+                        loadCameras(true);
+                    }
+                }, intervalSecs * 1000);
+            }
+        }
+    }
 }
 
 // Bind DOM Event Listeners cleanly (separating structure from behavior)
 document.addEventListener('DOMContentLoaded', () => {
-    // Initial load of cameras when the DOM is ready
+    // Initialize refresh mode control value from localStorage or default to WebSockets
+    const savedMode = localStorage.getItem('refresh-mode') || 'ws';
+    setRefreshMode(savedMode);
+
+    // Bind dropdown option click events
+    const opts = document.querySelectorAll('.refresh-opt');
+    opts.forEach(opt => {
+        opt.addEventListener('click', (e) => {
+            const val = e.target.getAttribute('data-value');
+            setRefreshMode(val);
+        });
+    });
+    
     loadCameras();
+
+    // Bind manual refresh button click event
+    const refreshBtn = document.getElementById('refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            loadCameras(false);
+        });
+    }
 
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
@@ -250,12 +470,6 @@ document.addEventListener('DOMContentLoaded', () => {
 setInterval(function() {
     nightOverlay.setTime();
 }, 60000);
-// Auto-refresh the map every 5 minutes (L-7 Visibility API)
-setInterval(() => {
-    if (!document.hidden) {
-        loadCameras();
-    }
-}, 300000);
 
 // Add the control box to the map at the bottom right to prevent overlapping with top-right search box
 L.control.layers(null, overlayMaps, { collapsed: false, position: 'bottomright' }).addTo(map);

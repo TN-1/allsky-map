@@ -75,3 +75,13 @@ def test_camera_response_last_seen_serialization():
     assert "+00:00" in dumped_aware["last_seen"] or "Z" in dumped_aware["last_seen"]
 
 
+def test_camera_response_last_seen_none():
+    res = CameraResponse(
+        name="Cam", owner="Owner", lat=1.0, lng=2.0, site_url="http://site.com",
+        image_url="local", status="online", last_seen=None
+    )
+    dumped = res.model_dump()
+    assert dumped["last_seen"] == ""
+
+
+

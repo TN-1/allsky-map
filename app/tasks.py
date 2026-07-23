@@ -19,9 +19,26 @@ async def reap_the_dead() -> None:
             now = datetime.now(timezone.utc)
             cutoff = now - timedelta(hours=24)
             db = SessionLocal()
+            updated_cameras = []
             try:
                 db.query(CameraDB).filter(CameraDB.name == None, CameraDB.last_seen < cutoff).delete()
-                db.query(CameraDB).filter(CameraDB.name != None, CameraDB.last_seen < cutoff).update({"status": "offline"})
+                
+                dying_cams = db.query(CameraDB).filter(
+                    CameraDB.name != None,
+                    CameraDB.last_seen < cutoff,
+                    CameraDB.status == "online"
+                ).all()
+
+                for cam in dying_cams:
+                    cam.status = "offline"
+                
+                if dying_cams:
+                    from app.schemas import CameraResponse
+                    updated_cameras = [
+                        CameraResponse.model_validate(c).model_dump(by_alias=True, mode="json")
+                        for c in dying_cams
+                    ]
+                
                 db.commit()
             except Exception:
                 db.rollback()
@@ -29,9 +46,14 @@ async def reap_the_dead() -> None:
             finally:
                 db.close()
             logger.info("Reaper cycle complete: pruned inactive entries.")
+            return updated_cameras
 
         try:
-            await asyncio.to_thread(run_reaper)
+            cameras = await asyncio.to_thread(run_reaper)
+            if cameras:
+                from app.main import manager
+                for cam_data in cameras:
+                    await manager.broadcast(cam_data)
         except Exception as e:
             logger.exception("Error in Reaper task")
 
@@ -130,20 +152,32 @@ async def check_dead_links() -> None:
 
             def save_results(data_list):
                 db = SessionLocal()
+                updated_cameras = []
                 try:
                     for api_key, site_valid, image_valid in data_list:
                         cam = db.get(CameraDB, api_key)
                         if cam:
+                            changed = (cam.site_url_valid != site_valid) or (cam.image_url_valid != image_valid)
                             cam.site_url_valid  = site_valid
                             cam.image_url_valid = image_valid
+                            if changed:
+                                from app.schemas import CameraResponse
+                                updated_cameras.append(
+                                    CameraResponse.model_validate(cam).model_dump(by_alias=True, mode="json")
+                                )
                     db.commit()
                 except Exception:
                     db.rollback()
                     raise
                 finally:
                     db.close()
+                return updated_cameras
 
-            await asyncio.to_thread(save_results, results)
+            updated = await asyncio.to_thread(save_results, results)
+            if updated:
+                from app.main import manager
+                for cam_data in updated:
+                    await manager.broadcast(cam_data)
             logger.info("Dead link checker cycle complete.")
         except Exception as e:
             logger.exception("Error in Dead Link Checker task")
