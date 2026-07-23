@@ -634,3 +634,175 @@ def test_camera_image_local_validation_and_cleanup(tmp_path, monkeypatch):
     assert new_path.exists()
 
 
+def test_websocket_connection_and_broadcast():
+    client = TestClient(app_module.app)
+    
+    # 1. Register a camera to get an API key
+    response = client.post("/api/register")
+    assert response.status_code == 200
+    api_key = response.json()["api_key"]
+    
+    # 2. Connect to the websocket endpoint
+    with client.websocket_connect("/api/ws") as websocket:
+        # 3. Ping the camera update endpoint
+        payload = {
+            "name": "WebSocket Test Cam",
+            "owner": "Test Owner",
+            "lat": 12.3456,
+            "lng": 78.9012,
+            "siteUrl": "http://site.com",
+            # Base64 encoded 1x1 black GIF image
+            "imageBase64": "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+        }
+        headers = {"X-API-Key": api_key}
+        
+        # Call /api/ping
+        ping_res = client.post("/api/ping", json=payload, headers=headers)
+        assert ping_res.status_code == 200
+        
+        # 4. Receive message from the websocket and assert content
+        message = websocket.receive_json()
+        assert message["name"] == "WebSocket Test Cam"
+        assert message["owner"] == "Test Owner"
+        # Coordinates should be fuzzed/rounded to 2 decimal places in CameraResponse
+        assert message["lat"] == 12.35
+        assert message["lng"] == 78.90
+        assert message["status"] == "online"
+
+
+def test_websocket_broadcast_failure():
+    from app.main import manager
+    
+    mock_ws = MagicMock()
+    # Mock send_json to raise Exception
+    mock_ws.send_json = MagicMock(side_effect=Exception("Failed to send json"))
+    
+    manager.active_connections = [mock_ws]
+    
+    import asyncio
+    asyncio.run(manager.broadcast({"test": "data"}))
+    
+    # The failing connection should have been disconnected/removed
+    assert mock_ws not in manager.active_connections
+
+
+def test_websocket_generic_exception():
+    client = TestClient(app_module.app)
+    
+    # We patch starlette's WebSocket.receive_text to raise a generic Exception inside the loop
+    with patch("starlette.websockets.WebSocket.receive_text", side_effect=Exception("Generic WS error")):
+        with client.websocket_connect("/api/ws") as websocket:
+            pass
+    # After exiting, the connection list must be empty
+    assert len(app_module.manager.active_connections) == 0
+
+
+
+def test_ping_save_image_exception():
+    client = TestClient(app_module.app)
+    
+    # Register camera
+    response = client.post("/api/register")
+    api_key = response.json()["api_key"]
+    
+    # Mock open inside app.main instead of builtins.open to avoid test system side-effects
+    with patch("app.main.open", side_effect=IOError("Disk full")):
+        payload = {
+            "name": "SaveErrCam",
+            "lat": 1.23,
+            "lng": 4.56,
+            "imageBase64": "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+        }
+        res = client.post("/api/ping", json=payload, headers={"X-API-Key": api_key})
+        assert res.status_code == 500
+        assert "Failed to save image" in res.json()["detail"]
+
+
+def test_ping_cleanup_image_exception():
+    client = TestClient(app_module.app)
+    
+    # Register camera
+    response = client.post("/api/register")
+    api_key = response.json()["api_key"]
+    
+    # Ping first time with name "CamOld"
+    payload = {
+        "name": "CamOld",
+        "lat": 1.23,
+        "lng": 4.56,
+        "imageBase64": "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+    }
+    client.post("/api/ping", json=payload, headers={"X-API-Key": api_key})
+    
+    # Now ping second time with name "CamNew" (name changes, triggers cleanup)
+    # Mock os.remove inside app.main instead of globally
+    payload["name"] = "CamNew"
+    with patch("app.main.os.remove", side_effect=OSError("Permission denied")):
+        res = client.post("/api/ping", json=payload, headers={"X-API-Key": api_key})
+        # The exception in cleanup is caught and ignored, so the ping should still succeed
+        assert res.status_code == 200
+
+
+def test_ping_broadcast_exception():
+    client = TestClient(app_module.app)
+    
+    # Register camera
+    response = client.post("/api/register")
+    api_key = response.json()["api_key"]
+    
+    # Mock manager.broadcast to raise Exception
+    with patch.object(app_module.manager, "broadcast", side_effect=Exception("Broadcast failed")):
+        payload = {
+            "name": "BroadcastErrCam",
+            "lat": 1.23,
+            "lng": 4.56,
+            "imageBase64": "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+        }
+        res = client.post("/api/ping", json=payload, headers={"X-API-Key": api_key})
+        # Exception is caught and logged, so ping should still succeed
+        assert res.status_code == 200
+
+
+def test_detect_image_type_webp():
+    from app.main import detect_image_type
+    webp_data = b"RIFF\x00\x00\x00\x00WEBPVP8 "
+    assert detect_image_type(webp_data) == "image/webp"
+
+
+def test_get_camera_image_not_found():
+    client = TestClient(app_module.app)
+    res = client.get("/api/cameras/NonExistentCamInDB/image")
+    assert res.status_code == 200
+    assert "Camera Feed Unavailable" in res.text
+
+
+def test_get_camera_image_read_exception():
+    db = TestSessionLocal()
+    hashed_key = hashlib.sha256("read_err_key".encode("utf-8")).hexdigest()
+    cam = CameraDB(api_key=hashed_key, name="ReadErrCam", image_url="local", image_url_valid=True)
+    db.add(cam)
+    db.commit()
+    db.close()
+    
+    client = TestClient(app_module.app)
+    
+    # Create the physical dummy file under app_module's temp directory
+    import os
+    from app.main import base_dir
+    hashed_name = hashlib.sha256("ReadErrCam".encode("utf-8")).hexdigest()
+    image_dir = os.path.join(base_dir, "data", "images")
+    os.makedirs(image_dir, exist_ok=True)
+    image_path = os.path.join(image_dir, f"{hashed_name}.img")
+    
+    with open(image_path, "wb") as f:
+        f.write(b"dummy_data")
+        
+    try:
+        # Patch open inside app.main to fail when attempting to read the file
+        with patch("app.main.open", side_effect=IOError("Disk corruption")):
+            res = client.get("/api/cameras/ReadErrCam/image")
+            assert res.status_code == 200
+            assert "Camera Feed Unavailable" in res.text
+    finally:
+        if os.path.exists(image_path):
+            os.remove(image_path)

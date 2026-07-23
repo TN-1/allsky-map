@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import List
 from contextlib import asynccontextmanager
 import httpx
-from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi import FastAPI, HTTPException, Header, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -96,6 +96,31 @@ image_limiter    = InMemoryRateLimiter(limit=30, window=60)   # new: rate-limit 
 
 
 # ---------------------------------------------------------------------------
+# WebSocket Connection Manager
+# ---------------------------------------------------------------------------
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_json(message)
+            except Exception:
+                self.disconnect(connection)
+
+manager = ConnectionManager()
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
@@ -155,7 +180,7 @@ async def add_security_headers(request: Request, call_next):
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org; " # allowed map tile providers
-        "connect-src 'self'; "            # tightened: API calls are same-origin only
+        "connect-src 'self' ws: wss:; "   # allowed same-origin and WebSocket connections
         "frame-ancestors 'none';"         # belt-and-suspenders alongside X-Frame-Options
     )
     response.headers["X-Frame-Options"] = "DENY"
@@ -173,6 +198,18 @@ async def add_security_headers(request: Request, call_next):
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
+
+@app.websocket("/api/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        manager.disconnect(websocket)
+
 
 @app.post(
     "/api/register",
@@ -272,6 +309,15 @@ async def update_camera(
     cam.last_seen = datetime.now(timezone.utc)
     cam.status    = "online"
     db.commit()
+    db.refresh(cam)
+
+    try:
+        response_schema = CameraResponse.model_validate(cam)
+        data_dict = response_schema.model_dump(by_alias=True, mode="json")
+        await manager.broadcast(data_dict)
+    except Exception as e:
+        logger.exception("Failed to broadcast camera update on ping: %s", e)
+
     return {"message": "Success"}
 
 
