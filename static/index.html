@@ -28,7 +28,7 @@
 		<div id="map" class="h-full w-full z-0"></div>
 
 		<!-- Top Right: unified Search + Theme Toggle join group -->
-		<div class="join absolute top-4 right-4 z-1000 shadow-xl bg-base-200/90 backdrop-blur-md border border-base-300 rounded-full overflow-hidden transition-all duration-300">
+		<div class="join absolute top-4 right-4 z-1000 shadow-xl bg-base-200/90 backdrop-blur-md border border-base-300 rounded-full transition-all duration-300">
 			<!-- Search Icon + Input -->
 			<div class="flex items-center pl-4 bg-transparent">
 				<svg aria-hidden="true" class="w-4 h-4 text-base-content/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -56,12 +56,43 @@
 				<summary id="refresh-summary" class="btn btn-ghost btn-sm h-10 text-xs font-semibold flex items-center gap-2 text-base-content border-none focus:outline-none normal-case" aria-haspopup="listbox" aria-label="Refresh Mode">
 					<span id="live-indicator" class="h-2 w-2 rounded-full bg-error live-pulse-dot flex"></span>
 					<span id="refresh-label">Live</span>
+					<svg class="w-2.5 h-2.5 opacity-65 ml-0.5 fill-none stroke-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+						<polyline points="6 9 12 15 18 9"></polyline>
+					</svg>
 				</summary>
-				<ul class="dropdown-content menu p-2 shadow-2xl bg-base-200 border border-base-300 rounded-box w-28 z-1000 text-xs font-semibold">
-					<li><button type="button" data-value="ws" class="refresh-opt active py-1.5 px-2">Live</button></li>
-					<li><button type="button" data-value="60" class="refresh-opt py-1.5 px-2">1 Min</button></li>
-					<li><button type="button" data-value="300" class="refresh-opt py-1.5 px-2">5 Mins</button></li>
-					<li><button type="button" data-value="manual" class="refresh-opt py-1.5 px-2">Manual</button></li>
+				<ul class="dropdown-content p-1.5 shadow-2xl bg-base-200 border border-base-300 rounded-2xl w-36 z-1000 mt-2 gap-1 text-xs list-none">
+					<li>
+						<button type="button" data-value="ws" class="refresh-opt active-mode">
+							<span>Live</span>
+							<svg class="check-mark w-3 h-3 opacity-100 transition-opacity duration-150 fill-none stroke-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="20 6 9 17 4 12"></polyline>
+							</svg>
+						</button>
+					</li>
+					<li>
+						<button type="button" data-value="60" class="refresh-opt">
+							<span>1 Min</span>
+							<svg class="check-mark w-3 h-3 opacity-0 transition-opacity duration-150 fill-none stroke-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="20 6 9 17 4 12"></polyline>
+							</svg>
+						</button>
+					</li>
+					<li>
+						<button type="button" data-value="300" class="refresh-opt">
+							<span>5 Mins</span>
+							<svg class="check-mark w-3 h-3 opacity-0 transition-opacity duration-150 fill-none stroke-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="20 6 9 17 4 12"></polyline>
+							</svg>
+						</button>
+					</li>
+					<li>
+						<button type="button" data-value="manual" class="refresh-opt">
+							<span>Manual</span>
+							<svg class="check-mark w-3 h-3 opacity-0 transition-opacity duration-150 fill-none stroke-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="20 6 9 17 4 12"></polyline>
+							</svg>
+						</button>
+					</li>
 				</ul>
 			</details>
 			
