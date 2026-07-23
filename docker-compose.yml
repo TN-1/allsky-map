@@ -185,8 +185,8 @@ services:
       - "traefik.http.routers.allsky-api-local.priority=10"
       - "traefik.http.routers.allsky-api-local.middlewares=pretty-errors@docker"
 
-      # Public Router: Serves the map, cameras, and ping, but BLOCKS /api/register
-      - "traefik.http.routers.allsky-api-public.rule=Host(`${DOMAIN_NAME:-map.example.com}`) && !Path(`/api/register`)"
+      # Public Router: Serves the map, cameras, and ping, and allows /api/register
+      - "traefik.http.routers.allsky-api-public.rule=Host(`${DOMAIN_NAME:-map.example.com}`)"
       - "traefik.http.routers.allsky-api-public.entrypoints=websecure"
       - "traefik.http.routers.allsky-api-public.tls=true"
       - "traefik.http.routers.allsky-api-public.tls.certresolver=myresolver"
