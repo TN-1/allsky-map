@@ -49,7 +49,7 @@ cp .env.example .env
 Edit `.env` and set your values:
 
 ```env
-DOMAIN_NAME=map.example.com
+DOMAIN_NAME=allsky-map.com
 ACME_EMAIL=admin@example.com
 TZ=Australia/Adelaide
 ```

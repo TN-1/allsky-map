@@ -170,7 +170,7 @@ do_install() {
     echo -e "${CYAN}These will be written to ${CONF_FILE}.${NC}"
     echo
 
-    ask         MAP_SERVER_BASE "Allsky Map Server Base URL (e.g. https://map.example.com)"
+    ask         MAP_SERVER_BASE "Allsky Map Server Base URL (e.g. https://allsky-map.com)"
     ask         API_KEY  "Your API Key (allsky_live_...)"
     ask         CAM_NAME "Camera name"
     ask_optional CAM_OWNER "Owner name/handle" ""

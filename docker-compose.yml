@@ -117,7 +117,7 @@ services:
       - "traefik.http.services.error-pages-service.loadbalancer.server.port=8080"
 
       # Public Catch-All Router: Catches blocked public routes and shows a pretty 404
-      - "traefik.http.routers.error-pages-router.rule=Host(`${DOMAIN_NAME:-map.example.com}`)"
+      - "traefik.http.routers.error-pages-router.rule=Host(`${DOMAIN_NAME:-allsky-map.com}`)"
       - "traefik.http.routers.error-pages-router.entrypoints=websecure"
       - "traefik.http.routers.error-pages-router.tls=true"
       - "traefik.http.routers.error-pages-router.tls.certresolver=myresolver"
@@ -186,7 +186,7 @@ services:
       - "traefik.http.routers.allsky-api-local.middlewares=pretty-errors@docker"
 
       # Public Router: Serves the map, cameras, and ping, and allows /api/register
-      - "traefik.http.routers.allsky-api-public.rule=Host(`${DOMAIN_NAME:-map.example.com}`)"
+      - "traefik.http.routers.allsky-api-public.rule=Host(`${DOMAIN_NAME:-allsky-map.com}`)"
       - "traefik.http.routers.allsky-api-public.entrypoints=websecure"
       - "traefik.http.routers.allsky-api-public.tls=true"
       - "traefik.http.routers.allsky-api-public.tls.certresolver=myresolver"
