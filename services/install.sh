@@ -170,7 +170,6 @@ do_install() {
     echo -e "${CYAN}These will be written to ${CONF_FILE}.${NC}"
     echo
 
-    ask         MAP_SERVER_BASE "Allsky Map Server Base URL (e.g. https://allsky-map.com)"
     ask         API_KEY  "Your API Key (allsky_live_...)"
     ask         CAM_NAME "Camera name"
     ask_optional CAM_OWNER "Owner name/handle" ""
@@ -196,12 +195,10 @@ do_install() {
     # --- Validate all inputs before showing the summary ---
 
     # 1. Auto-fix missing URL schemes (turns bare hostnames into https:// URLs)
-    ensure_url_scheme MAP_SERVER_BASE
     ensure_url_scheme CAM_SITE
 
     # 2. Check URL formats are valid
-    validate_url "Map Server Base URL" "${MAP_SERVER_BASE}"
-    validate_url "Site URL"            "${CAM_SITE}"
+    validate_url "Site URL" "${CAM_SITE}"
 
     # Verify that the image directory exists
     local img_dir
@@ -210,11 +207,8 @@ do_install() {
         warn "Image directory '${img_dir}' does not exist. Please make sure the path is correct."
     fi
 
-    # 3. Clean and build the API URL
-    MAP_SERVER_BASE="${MAP_SERVER_BASE%/}"
-    MAP_SERVER_BASE="${MAP_SERVER_BASE%/api/ping}"
-    MAP_SERVER_BASE="${MAP_SERVER_BASE%/}"
-    API_URL="${MAP_SERVER_BASE}/api/ping"
+    # 3. Set API URL (defaults to https://allsky-map.com/api/ping unless set in environment)
+    API_URL="${API_URL:-https://allsky-map.com/api/ping}"
 
     # 4. API key format: must start with allsky_live_ followed by a UUID
     if [[ ! "${API_KEY}" =~ ^allsky_live_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
