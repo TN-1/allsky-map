@@ -3,5 +3,5 @@ uvicorn==0.51.0
 pydantic==2.13.4
 sqlalchemy==2.0.51
 httpx==0.28.1
-websockets==14.2
+websockets==16.1.1
 
