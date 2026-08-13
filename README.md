@@ -21,12 +21,11 @@ A centralized, self-hostable map for [indi-allsky](https://github.com/aaronwmorr
 ## Architecture
 
 ```
-indi-allsky camera host
-  └─ services/allsky-map-ping  ──POST /api/ping──►  FastAPI server  ──►  SQLite DB
-                                                         │
-                                              GET /api/cameras
-                                                         │
-                                                  Leaflet frontend
+indi-allsky camera host  ──POST /api/ping──►  FastAPI server  ──►  SQLite DB
+                                                   │
+                                        GET /api/cameras
+                                                   │
+                                            Leaflet frontend
 ```
 
 ---
@@ -75,29 +74,6 @@ The server will start at `http://localhost:8000`.
 
 ---
 
-## Registering a Camera
-
-1. Open the map in your browser and click **"Register Camera"**.
-2. Click **"Generate API Key"** — copy and store the key securely. **It is shown only once.**
-3. Install the ping client on the machine running `indi-allsky` (see below).
-
----
-
-## Camera Ping Client Install
-
-The `services/` directory contains a systemd-based ping client that runs on the camera host.
-
-```bash
-sudo bash services/install.sh
-```
-
-The installer will guide you through configuring your API key, camera name, coordinates, and site URL. It installs:
-- `/usr/local/bin/allsky-map-ping` — the ping script
-- `/etc/allsky-map/ping.conf` — your camera's configuration (chmod 600)
-- A systemd timer that pings the server every 5 minutes
-
----
-
 ## API Reference
 
 ### `POST /api/register`
@@ -108,7 +84,7 @@ Generates a new API key. Returns the raw key **once** — store it immediately.
 ```
 
 ### `POST /api/ping`
-Updates a camera's data and marks it online. Called by the ping client.
+Updates a camera's data and marks it online. Called periodically by `indi-allsky`.
 
 **Headers:** `X-API-Key: <your-api-key>`
 
