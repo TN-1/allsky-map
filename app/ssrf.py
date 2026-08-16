@@ -77,22 +77,8 @@ async def resolve_safe_url(url: str) -> tuple[str, dict, dict] | None:
                 logger.warning("SSRF blocked: %s resolved to private IP %s", hostname, ip_str)
                 return None
 
-        # Choose the first resolved IP
-        target_ip = addr_infos[0][4][0]
-        # Format IPv6 addresses correctly in the host portion of URL
-        if ":" in target_ip:
-            ip_str = f"[{target_ip}]"
-        else:
-            ip_str = target_ip
-
-        # Construct new URL with IP address
-        port_str = f":{parsed.port}" if parsed.port else ""
-        new_netloc = f"{ip_str}{port_str}"
-        new_url = parsed._replace(netloc=new_netloc).geturl()
-
-        headers = {"Host": hostname}
-        extensions = {"sni_hostname": hostname}
-        return new_url, headers, extensions
+        headers = {"Host": hostname or ""}
+        return url, headers, {}
     except Exception as exc:
         logger.warning("SSRF guard resolution failed for %r: %s", url, exc)
         return None
