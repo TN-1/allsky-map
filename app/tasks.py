@@ -64,6 +64,7 @@ async def _safe_head(client: httpx.AsyncClient, url: str, timeout: float = 5.0) 
     """
     Fetch url with SSRF guard applied on the initial URL and any redirect destination.
     Returns True if the URL is reachable (status < 400) and resolves to a public IP.
+    Falls back to GET if HEAD fails or returns status >= 400.
     """
     resolved = await resolve_safe_url(url)
     if not resolved:
@@ -72,7 +73,6 @@ async def _safe_head(client: httpx.AsyncClient, url: str, timeout: float = 5.0) 
     headers_dict = dict(headers)
     headers_dict["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     try:
-        # Use HEAD where possible to avoid downloading the full body
         res = await client.head(safe_url, headers=headers_dict, extensions=extensions, follow_redirects=False, timeout=timeout)
         if res.status_code in (301, 302, 303, 307, 308):
             redirect = res.headers.get("location", "")
@@ -87,6 +87,27 @@ async def _safe_head(client: httpx.AsyncClient, url: str, timeout: float = 5.0) 
             redir_headers_dict = dict(redir_headers)
             redir_headers_dict["User-Agent"] = headers_dict["User-Agent"]
             res = await client.head(safe_redir_url, headers=redir_headers_dict, extensions=redir_ext, follow_redirects=False, timeout=timeout)
+        if res.status_code < 400:
+            return True
+    except Exception:
+        pass
+
+    # Fallback to GET if HEAD returned status >= 400 or raised exception (e.g. 405 Method Not Allowed / 403 Forbidden)
+    try:
+        res = await client.get(safe_url, headers=headers_dict, extensions=extensions, follow_redirects=False, timeout=timeout)
+        if res.status_code in (301, 302, 303, 307, 308):
+            redirect = res.headers.get("location", "")
+            if not redirect:
+                return False
+            from urllib.parse import urljoin
+            full_redirect = urljoin(url, redirect)
+            resolved_redir = await resolve_safe_url(full_redirect)
+            if not resolved_redir:
+                return False
+            safe_redir_url, redir_headers, redir_ext = resolved_redir
+            redir_headers_dict = dict(redir_headers)
+            redir_headers_dict["User-Agent"] = headers_dict["User-Agent"]
+            res = await client.get(safe_redir_url, headers=redir_headers_dict, extensions=redir_ext, follow_redirects=False, timeout=timeout)
         return res.status_code < 400
     except Exception:
         return False
@@ -115,6 +136,27 @@ async def _safe_get_image(client: httpx.AsyncClient, url: str, timeout: float = 
             redir_headers_dict = dict(redir_headers)
             redir_headers_dict["User-Agent"] = headers_dict["User-Agent"]
             res = await client.head(safe_redir_url, headers=redir_headers_dict, extensions=redir_ext, follow_redirects=False, timeout=timeout)
+        if res.status_code < 400:
+            content_type = res.headers.get("content-type", "")
+            return "image" in content_type or not content_type
+    except Exception:
+        pass
+
+    try:
+        res = await client.get(safe_url, headers=headers_dict, extensions=extensions, follow_redirects=False, timeout=timeout)
+        if res.status_code in (301, 302, 303, 307, 308):
+            redirect = res.headers.get("location", "")
+            if not redirect:
+                return False
+            from urllib.parse import urljoin
+            full_redirect = urljoin(url, redirect)
+            resolved_redir = await resolve_safe_url(full_redirect)
+            if not resolved_redir:
+                return False
+            safe_redir_url, redir_headers, redir_ext = resolved_redir
+            redir_headers_dict = dict(redir_headers)
+            redir_headers_dict["User-Agent"] = headers_dict["User-Agent"]
+            res = await client.get(safe_redir_url, headers=redir_headers_dict, extensions=redir_ext, follow_redirects=False, timeout=timeout)
         content_type = res.headers.get("content-type", "")
         return res.status_code < 400 and ("image" in content_type or not content_type)
     except Exception:
