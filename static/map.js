@@ -78,9 +78,14 @@ function el(tag, opts = {}) {
 
 /** Only allow http:// and https:// in href attributes — strips javascript: and data: URIs */
 function safeHref(url) {
+    if (!url) return '#';
+    let href = String(url).trim();
+    if (!/^https?:\/\//i.test(href)) {
+        href = 'https://' + href;
+    }
     try {
-        const parsed = new URL(url);
-        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return url;
+        const parsed = new URL(href);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return href;
     } catch (_) {}
     return '#';
 }
@@ -158,13 +163,39 @@ function createMarker(data) {
         container.appendChild(link);
     }
 
-    // Site URL — validated to prevent javascript: and data: URIs
+    // Site URL — prominent "Go To Site" button under image
     if (data.siteUrl) {
-        container.appendChild(el('a', {
-            text: 'View Camera Website',
-            style: 'display:block;margin-top:10px;text-align:center;text-decoration:none;color:#2ecc71;font-weight:bold;transition:color 0.3s ease;',
+        const siteBtn = el('a', {
+            cls: 'allsky-popup-btn btn btn-sm w-full mt-3 font-semibold shadow-md no-underline flex items-center justify-center gap-1.5',
             attrs: { href: safeHref(data.siteUrl), target: '_blank', rel: 'noopener noreferrer' }
-        }));
+        });
+        
+        const btnText = document.createTextNode('Go To Site');
+        siteBtn.appendChild(btnText);
+
+        const svgIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svgIcon.setAttribute('class', 'w-3.5 h-3.5 fill-none stroke-current');
+        svgIcon.setAttribute('viewBox', '0 0 24 24');
+        svgIcon.setAttribute('stroke-width', '2');
+        svgIcon.setAttribute('stroke-linecap', 'round');
+        svgIcon.setAttribute('stroke-linejoin', 'round');
+        
+        const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path1.setAttribute('d', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6');
+        const path2 = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        path2.setAttribute('points', '15 3 21 3 21 9');
+        const path3 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        path3.setAttribute('x1', '10');
+        path3.setAttribute('y1', '14');
+        path3.setAttribute('x2', '21');
+        path3.setAttribute('y2', '3');
+        
+        svgIcon.appendChild(path1);
+        svgIcon.appendChild(path2);
+        svgIcon.appendChild(path3);
+        
+        siteBtn.appendChild(svgIcon);
+        container.appendChild(siteBtn);
     }
 
     marker.bindPopup(container, { autoPanPadding: [20, 80] });

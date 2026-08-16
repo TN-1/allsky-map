@@ -20,18 +20,19 @@ html, body {
 /* Styling for Error image replacement card */
 .allsky-img-err {
     width: 100%;
-    height: 120px;
+    aspect-ratio: 16 / 9;
     margin-top: 8px;
     border-radius: 8px;
-    background: var(--color-base-300, #2c3e50);
-    color: var(--color-base-content, #bdc3c7);
     font-family: system-ui, -apple-system, sans-serif;
     font-size: 13px;
+    font-weight: 500;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--color-base-300, #34495e);
-    opacity: 0.8;
+    padding: 12px;
+    box-sizing: border-radius;
+    text-align: center;
 }
 
 .allsky-popup-img {
@@ -312,4 +313,48 @@ html:has(.theme-controller[value=light]:checked) .refresh-opt:hover {
 /* Light theme override */
 html:has(.theme-controller[value=light]:checked) #refresh-dropdown .dropdown-content {
     background-color: var(--color-base-200, #f2f2f2) !important;
+}
+
+/* Leaflet Popup Button & Error Card Styling */
+.allsky-popup .btn {
+    text-decoration: none !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .allsky-img-err {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    color: rgba(255, 255, 255, 0.75) !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .allsky-img-err {
+    background: rgba(0, 0, 0, 0.04) !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    color: rgba(0, 0, 0, 0.7) !important;
+}
+
+/* --- Dark Theme Popup Button --- */
+html:not(:has(.theme-controller[value=light]:checked)) .allsky-popup-btn {
+    background: rgba(46, 204, 113, 0.15) !important;
+    color: #2ecc71 !important;
+    border: 1px solid rgba(46, 204, 113, 0.35) !important;
+}
+
+html:not(:has(.theme-controller[value=light]:checked)) .allsky-popup-btn:hover {
+    background: #2ecc71 !important;
+    color: #1e1e24 !important;
+    border-color: #2ecc71 !important;
+    box-shadow: 0 4px 14px rgba(46, 204, 113, 0.3) !important;
+}
+
+/* --- Light Theme Popup Button --- */
+html:has(.theme-controller[value=light]:checked) .allsky-popup-btn {
+    background: #2ecc71 !important;
+    color: #ffffff !important;
+    border: 1px solid #27ae60 !important;
+}
+
+html:has(.theme-controller[value=light]:checked) .allsky-popup-btn:hover {
+    background: #27ae60 !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 14px rgba(46, 204, 113, 0.3) !important;
 }

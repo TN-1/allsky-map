@@ -4,7 +4,10 @@ from typing import Generator
 from sqlalchemy.orm import Session
 import os
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./allsky_map.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./data/allsky_map.db")
+
+if DATABASE_URL.startswith("sqlite:///./data/"):
+    os.makedirs("./data", exist_ok=True)
 
 engine = create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False}

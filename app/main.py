@@ -48,6 +48,10 @@ def run_migrations():
                     conn.execute(text("SELECT image_url_valid FROM cameras LIMIT 1"))
                 except Exception:
                     conn.execute(text("ALTER TABLE cameras ADD COLUMN image_url_valid BOOLEAN DEFAULT 1 NOT NULL"))
+
+                # Ensure existing entries with non-empty URLs start as valid
+                conn.execute(text("UPDATE cameras SET site_url_valid = 1 WHERE (site_url_valid IS NULL OR site_url_valid = 0) AND site_url IS NOT NULL AND site_url != ''"))
+                conn.execute(text("UPDATE cameras SET image_url_valid = 1 WHERE (image_url_valid IS NULL OR image_url_valid = 0) AND image_url IS NOT NULL AND image_url != ''"))
     except Exception as e:
         logger.exception("Database migration failed: %s", e)
         print(f"Migration error: {e}")
@@ -269,6 +273,7 @@ async def update_camera(
     cam.lat       = data.lat
     cam.lng       = data.lng
     cam.site_url  = data.site_url
+    cam.site_url_valid = True
 
     import base64
     try:

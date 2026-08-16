@@ -427,6 +427,8 @@ def test_migration_alter_table(monkeypatch):
         Exception("Column not found"),
         None,
         Exception("Column not found"),
+        None,
+        None,
         None
     ]
     
@@ -436,7 +438,7 @@ def test_migration_alter_table(monkeypatch):
     
     run_migrations()
     
-    assert mock_conn.execute.call_count == 5
+    assert mock_conn.execute.call_count == 7
 
 def test_migration_table_does_not_exist(monkeypatch):
     from app.main import run_migrations, engine

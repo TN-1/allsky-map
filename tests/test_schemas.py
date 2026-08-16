@@ -83,5 +83,11 @@ def test_camera_response_last_seen_none():
     dumped = res.model_dump()
     assert dumped["last_seen"] == ""
 
+def test_camera_ping_site_url_auto_scheme():
+    ping = CameraPing(
+        name="Cam", lat=10.0, lng=20.0, siteUrl="my-allsky-site.org", imageBase64="ZmFrZS1pbWFnZS1ieXRlcw=="
+    )
+    assert ping.site_url == "https://my-allsky-site.org"
+
 
 
