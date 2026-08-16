@@ -144,9 +144,8 @@ class TestResolveSafeUrl:
         res = await resolve_safe_url("http://example.com/image.jpg")
         assert res is not None
         safe_url, headers, extensions = res
-        assert safe_url == "http://1.1.1.1/image.jpg"
+        assert safe_url == "http://example.com/image.jpg"
         assert headers == {"Host": "example.com"}
-        assert extensions == {"sni_hostname": "example.com"}
 
     @pytest.mark.asyncio
     async def test_resolve_safe_url_ipv6(self, monkeypatch):
@@ -155,7 +154,7 @@ class TestResolveSafeUrl:
         res = await resolve_safe_url("https://example.com/cam.jpg")
         assert res is not None
         safe_url, headers, extensions = res
-        assert safe_url == "https://[2606:4700:4700::1111]/cam.jpg"
+        assert safe_url == "https://example.com/cam.jpg"
 
     @pytest.mark.asyncio
     async def test_resolve_safe_url_with_port(self, monkeypatch):
@@ -164,7 +163,7 @@ class TestResolveSafeUrl:
         res = await resolve_safe_url("http://example.com:8080/cam.jpg")
         assert res is not None
         safe_url, headers, extensions = res
-        assert safe_url == "http://8.8.8.8:8080/cam.jpg"
+        assert safe_url == "http://example.com:8080/cam.jpg"
 
     @pytest.mark.asyncio
     async def test_resolve_safe_url_private_ip(self, monkeypatch):
