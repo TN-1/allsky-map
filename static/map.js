@@ -22,7 +22,7 @@ const markerCluster = L.markerClusterGroup({
 
 // Create dummy Layer Groups for toggles
 const onlineLayer = L.layerGroup().addTo(map);
-const offlineLayer = L.layerGroup().addTo(map);
+const offlineLayer = L.layerGroup();
 
 // Define the overlay object for the control UI
 const overlayMaps = {
