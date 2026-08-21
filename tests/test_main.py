@@ -234,6 +234,20 @@ def test_ping_camera_partial_fields_and_validation():
     assert cam_db.image_url == "local"
     db.close()
 
+    # 5. Valid ping with NO image (image upload disabled)
+    response = client.post(
+        "/api/ping",
+        json={"name": "No Image Cam", "lat": 2.0, "lng": 3.0},
+        headers={"X-API-Key": raw_key}
+    )
+    assert response.status_code == 200
+    db = TestSessionLocal()
+    cam_db = db.query(CameraDB).filter(CameraDB.api_key == hashed_key).first()
+    assert cam_db.name == "No Image Cam"
+    assert cam_db.lat == 2.0
+    assert cam_db.lng == 3.0
+    db.close()
+
 def test_ping_camera_invalid_key():
     client = TestClient(app_module.app)
     payload = {"name": "Test", "lat": 1.0, "lng": 2.0, "imageBase64": "/9j/ZmFrZS1pbWFnZS1ieXRlcw=="}
@@ -261,8 +275,8 @@ def test_rate_limiting():
 def test_payload_limits():
     client = TestClient(app_module.app)
     
-    # Send a request body larger than 5MB
-    large_payload = "A" * (5 * 1024 * 1024 + 100)
+    # Send a request body larger than 25MB
+    large_payload = "A" * (25 * 1024 * 1024 + 100)
     response = client.post("/api/ping", content=large_payload, headers={"X-API-Key": "somekey", "Content-Type": "application/json"})
     assert response.status_code == 413
     assert response.json()["detail"] == "Request Entity Too Large"

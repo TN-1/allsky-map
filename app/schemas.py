@@ -80,7 +80,7 @@ class CameraPing(BaseModel):
     lat: float = Field(..., ge=-90.0, le=90.0)
     lng: float = Field(..., ge=-180.0, le=180.0)
     site_url: str = Field("", max_length=2000)
-    image_base64: str = Field(..., description="Base64 encoded image content")
+    image_base64: Optional[str] = Field(None, description="Base64 encoded image content")
 
     @field_validator("site_url", mode="before")
     @classmethod

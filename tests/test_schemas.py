@@ -50,6 +50,15 @@ def test_camera_ping_schema_empty_urls():
     assert ping.site_url == ""
     assert ping.image_base64 == "ZmFrZS1pbWFnZS1ieXRlcw=="
 
+def test_camera_ping_schema_optional_image():
+    # Omitted imageBase64
+    ping1 = CameraPing(name="Cam", lat=10.0, lng=20.0)
+    assert ping1.image_base64 is None
+
+    # None imageBase64
+    ping2 = CameraPing(name="Cam", lat=10.0, lng=20.0, imageBase64=None)
+    assert ping2.image_base64 is None
+
 def test_camera_ping_schema_invalid_url():
     with pytest.raises(ValidationError):
         CameraPing(name="Cam", lat=10.0, lng=20.0, siteUrl="not-a-url", imageBase64="ZmFrZS1pbWFnZS1ieXRlcw==")

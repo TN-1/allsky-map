@@ -156,8 +156,8 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 # Hard limit on request body (covers Content-Length and chunked encoding)
-MAX_PAYLOAD_SIZE = 5 * 1024 * 1024  # 5 MB
-MAX_API_KEY_LEN  = 200              # allsky_live_<uuid> is 48 chars; generous headroom
+MAX_PAYLOAD_SIZE = 25 * 1024 * 1024  # 25 MB
+MAX_API_KEY_LEN  = 200               # allsky_live_<uuid> is 48 chars; generous headroom
 
 @app.middleware("http")
 async def limit_payload_size(request: Request, call_next):
@@ -275,39 +275,45 @@ async def update_camera(
     cam.site_url  = data.site_url
     cam.site_url_valid = True
 
-    import base64
-    try:
-        decoded_image = base64.b64decode(data.image_base64)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid base64 encoding for image")
-    
-    # Verify content type
-    content_type = detect_image_type(decoded_image)
-    if not content_type or content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(status_code=400, detail="Invalid or unsupported image format")
+    if data.image_base64 and data.image_base64.strip():
+        import base64
+        try:
+            decoded_image = base64.b64decode(data.image_base64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 encoding for image")
+        
+        # Verify content type
+        content_type = detect_image_type(decoded_image)
+        if not content_type or content_type not in ALLOWED_IMAGE_TYPES:
+            raise HTTPException(status_code=400, detail="Invalid or unsupported image format")
 
-    try:
-        hashed_name = hashlib.sha256(data.name.encode("utf-8")).hexdigest()
-        image_dir = os.path.join(base_dir, "data", "images")
-        os.makedirs(image_dir, exist_ok=True)
-        image_path = os.path.join(image_dir, f"{hashed_name}.img")
-        
-        with open(image_path, "wb") as f:
-            f.write(decoded_image)
-        
-        cam.image_url = "local"
-        cam.image_url_valid = True
-    except Exception as e:
-        logger.exception("Failed to save uploaded image: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to save image")
+        try:
+            hashed_name = hashlib.sha256(data.name.encode("utf-8")).hexdigest()
+            image_dir = os.path.join(base_dir, "data", "images")
+            os.makedirs(image_dir, exist_ok=True)
+            image_path = os.path.join(image_dir, f"{hashed_name}.img")
+            
+            with open(image_path, "wb") as f:
+                f.write(decoded_image)
+            
+            cam.image_url = "local"
+            cam.image_url_valid = True
+        except Exception as e:
+            logger.exception("Failed to save uploaded image: %s", e)
+            raise HTTPException(status_code=500, detail="Failed to save image")
     
-    # Clean up old file if name changed
+    # Clean up or rename old file if name changed
     if old_name and old_name != data.name:
         try:
             old_hash = hashlib.sha256(old_name.encode("utf-8")).hexdigest()
             old_path = os.path.join(base_dir, "data", "images", f"{old_hash}.img")
             if os.path.exists(old_path):
-                os.remove(old_path)
+                new_hash = hashlib.sha256(data.name.encode("utf-8")).hexdigest()
+                new_path = os.path.join(base_dir, "data", "images", f"{new_hash}.img")
+                if not os.path.exists(new_path):
+                    os.rename(old_path, new_path)
+                else:
+                    os.remove(old_path)
         except Exception:
             pass
 
@@ -334,7 +340,7 @@ async def update_camera(
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-MAX_IMAGE_BYTES     = 10 * 1024 * 1024  # 10 MB
+MAX_IMAGE_BYTES     = 20 * 1024 * 1024  # 20 MB
 
 def detect_image_type(data: bytes) -> str | None:
     if data.startswith(b"\xff\xd8\xff"):
