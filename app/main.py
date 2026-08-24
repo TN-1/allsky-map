@@ -10,7 +10,7 @@ from typing import List
 from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -70,7 +70,11 @@ class InMemoryRateLimiter:
 
     async def check(self, request: Request):
         # Prefer the real client IP forwarded by Traefik over the proxy IP
-        client_ip = request.client.host if request.client else "unknown"
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
         now = time.time()
 
         async with self._lock:
@@ -390,9 +394,9 @@ async def get_camera_image(
     if os.path.exists(image_path):
         try:
             with open(image_path, "rb") as f:
-                content = f.read()
-            content_type = detect_image_type(content) or "image/jpeg"
-            return Response(content=content, media_type=content_type)
+                header = f.read(16)
+            content_type = detect_image_type(header) or "image/jpeg"
+            return FileResponse(image_path, media_type=content_type)
         except Exception as exc:
             logger.warning("Failed to read local image for camera %r: %s", camera_name, exc)
             return default_placeholder_image()
