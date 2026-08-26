@@ -824,19 +824,76 @@ def test_get_camera_image_read_exception():
             os.remove(image_path)
 
 
-def test_get_config_default():
+def test_get_tile_invalid_style():
     client = TestClient(app_module.app)
+    res = client.get("/api/tiles/invalid_style/0/0/0.png")
+    assert res.status_code == 400
+    assert res.json()["detail"] == "Invalid tile style"
+
+
+def test_get_tile_invalid_coordinates():
+    client = TestClient(app_module.app)
+    res = client.get("/api/tiles/dark/-1/0/0.png")
+    assert res.status_code == 400
+    assert res.json()["detail"] == "Invalid tile coordinates"
+
+    res = client.get("/api/tiles/dark/25/0/0.png")
+    assert res.status_code == 400
+
+
+def test_get_tile_dark_with_key():
+    client = TestClient(app_module.app)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b"fake_png_data"
+    mock_resp.headers = {"content-type": "image/png"}
+
+    with patch.dict(os.environ, {"CARTO_API_KEY": "secret_carto_key_999"}):
+        with patch("httpx.AsyncClient.get", return_value=mock_resp) as mock_get:
+            res = client.get("/api/tiles/dark/2/1/1.png")
+            assert res.status_code == 200
+            assert res.content == b"fake_png_data"
+            assert res.headers["content-type"] == "image/png"
+            assert "Cache-Control" in res.headers
+            # Verify the upstream URL contained the key
+            called_url = mock_get.call_args[0][0]
+            assert "dark_all/2/1/1.png?key=secret_carto_key_999" in called_url
+
+
+def test_get_tile_light_without_key():
+    client = TestClient(app_module.app)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b"fake_light_png"
+    mock_resp.headers = {"content-type": "image/png"}
+
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("CARTO_API_KEY", None)
-        res = client.get("/api/config")
-        assert res.status_code == 200
-        assert res.json() == {"cartoApiKey": ""}
+        with patch("httpx.AsyncClient.get", return_value=mock_resp) as mock_get:
+            res = client.get("/api/tiles/light/5/10/12.png")
+            assert res.status_code == 200
+            assert res.content == b"fake_light_png"
+            called_url = mock_get.call_args[0][0]
+            assert "rastertiles/voyager/5/10/12.png" in called_url
+            assert "key=" not in called_url
 
 
-def test_get_config_custom_key():
+def test_get_tile_upstream_error():
     client = TestClient(app_module.app)
-    with patch.dict(os.environ, {"CARTO_API_KEY": "test-carto-key-12345"}):
-        res = client.get("/api/config")
-        assert res.status_code == 200
-        assert res.json() == {"cartoApiKey": "test-carto-key-12345"}
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_resp.content = b"Not found"
+    mock_resp.headers = {"content-type": "text/plain"}
+
+    with patch("httpx.AsyncClient.get", return_value=mock_resp):
+        res = client.get("/api/tiles/dark/2/1/1.png")
+        assert res.status_code == 404
+
+
+def test_get_tile_upstream_exception():
+    client = TestClient(app_module.app)
+    with patch("httpx.AsyncClient.get", side_effect=Exception("Network error")):
+        res = client.get("/api/tiles/dark/2/1/1.png")
+        assert res.status_code == 502
+
 

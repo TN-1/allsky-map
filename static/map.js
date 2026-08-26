@@ -1,14 +1,10 @@
 // Set default view to the world with a zoom level of 2
 const map = L.map('map').setView([0, 0], 2);
 
-let cartoApiKey = '';
-
 function getTileUrl(theme) {
-    const keyParam = cartoApiKey ? `?key=${encodeURIComponent(cartoApiKey)}` : '';
-    if (theme === 'light') {
-        return `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png${keyParam}`;
-    }
-    return `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${keyParam}`;
+    return theme === 'light'
+        ? '/api/tiles/light/{z}/{x}/{y}.png'
+        : '/api/tiles/dark/{z}/{x}/{y}.png';
 }
 
 const initialTheme = localStorage.getItem('theme') || 'dark';
@@ -16,21 +12,8 @@ const initialTheme = localStorage.getItem('theme') || 'dark';
 // Add map tiles
 const tiles = L.tileLayer(getTileUrl(initialTheme), {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>',
-    subdomains: 'abcd',
     maxZoom: 20
 }).addTo(map);
-
-// Fetch runtime configuration (e.g. CARTO API key configured in .env)
-fetch('/api/config')
-    .then(response => response.ok ? response.json() : {})
-    .then(config => {
-        if (config && config.cartoApiKey) {
-            cartoApiKey = config.cartoApiKey;
-            const currentTheme = document.documentElement.getAttribute('data-theme') || (localStorage.getItem('theme') || 'dark');
-            tiles.setUrl(getTileUrl(currentTheme));
-        }
-    })
-    .catch(err => console.error('Error fetching config:', err));
 
 // Create the terminator layer
 const nightOverlay = L.terminator({
