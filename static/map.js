@@ -1,10 +1,36 @@
 // Set default view to the world with a zoom level of 2
 const map = L.map('map').setView([0, 0], 2);
 
+let cartoApiKey = '';
+
+function getTileUrl(theme) {
+    const keyParam = cartoApiKey ? `?key=${encodeURIComponent(cartoApiKey)}` : '';
+    if (theme === 'light') {
+        return `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png${keyParam}`;
+    }
+    return `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${keyParam}`;
+}
+
+const initialTheme = localStorage.getItem('theme') || 'dark';
+
 // Add map tiles
-const tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>'
-    }).addTo(map);
+const tiles = L.tileLayer(getTileUrl(initialTheme), {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 20
+}).addTo(map);
+
+// Fetch runtime configuration (e.g. CARTO API key configured in .env)
+fetch('/api/config')
+    .then(response => response.ok ? response.json() : {})
+    .then(config => {
+        if (config && config.cartoApiKey) {
+            cartoApiKey = config.cartoApiKey;
+            const currentTheme = document.documentElement.getAttribute('data-theme') || (localStorage.getItem('theme') || 'dark');
+            tiles.setUrl(getTileUrl(currentTheme));
+        }
+    })
+    .catch(err => console.error('Error fetching config:', err));
 
 // Create the terminator layer
 const nightOverlay = L.terminator({
@@ -521,23 +547,18 @@ if (themeToggle) {
     if (savedTheme === 'light') {
         themeToggle.checked = true;
         document.documentElement.setAttribute('data-theme', 'light');
-        tiles.setUrl('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png');
+        tiles.setUrl(getTileUrl('light'));
     } else {
         themeToggle.checked = false;
         document.documentElement.setAttribute('data-theme', 'dark');
-        tiles.setUrl('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+        tiles.setUrl(getTileUrl('dark'));
     }
 
     themeToggle.addEventListener('change', (e) => {
         const isLight = e.target.checked;
-        if (isLight) {
-            localStorage.setItem('theme', 'light');
-            document.documentElement.setAttribute('data-theme', 'light');
-            tiles.setUrl('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png');
-        } else {
-            localStorage.setItem('theme', 'dark');
-            document.documentElement.setAttribute('data-theme', 'dark');
-            tiles.setUrl('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
-        }
+        const theme = isLight ? 'light' : 'dark';
+        localStorage.setItem('theme', theme);
+        document.documentElement.setAttribute('data-theme', theme);
+        tiles.setUrl(getTileUrl(theme));
     });
 }

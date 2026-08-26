@@ -207,6 +207,16 @@ async def add_security_headers(request: Request, call_next):
 # API Endpoints
 # ---------------------------------------------------------------------------
 
+@app.get(
+    "/api/config",
+    summary="Public frontend configuration",
+    description="Returns non-secret configuration values needed by the map frontend.",
+)
+async def get_config() -> dict:
+    return {
+        "cartoApiKey": os.environ.get("CARTO_API_KEY", ""),
+    }
+
 @app.websocket("/api/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
