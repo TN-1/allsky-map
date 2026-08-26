@@ -822,3 +822,21 @@ def test_get_camera_image_read_exception():
     finally:
         if os.path.exists(image_path):
             os.remove(image_path)
+
+
+def test_get_config_default():
+    client = TestClient(app_module.app)
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("CARTO_API_KEY", None)
+        res = client.get("/api/config")
+        assert res.status_code == 200
+        assert res.json() == {"cartoApiKey": ""}
+
+
+def test_get_config_custom_key():
+    client = TestClient(app_module.app)
+    with patch.dict(os.environ, {"CARTO_API_KEY": "test-carto-key-12345"}):
+        res = client.get("/api/config")
+        assert res.status_code == 200
+        assert res.json() == {"cartoApiKey": "test-carto-key-12345"}
+

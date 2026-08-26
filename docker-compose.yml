@@ -162,6 +162,7 @@ services:
     environment:
       - TZ=${TZ:-UTC}                # Set your local timezone in .env (e.g. TZ=Australia/Adelaide)
       - DATABASE_URL=sqlite:////app/data/allsky_map.db
+      - CARTO_API_KEY=${CARTO_API_KEY:-}
     volumes:
       # Mount directory with SELinux compliant permissions flag :z
       - "./data:/app/data:z"
