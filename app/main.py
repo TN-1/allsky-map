@@ -131,8 +131,12 @@ manager = ConnectionManager()
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+http_client: httpx.AsyncClient | None = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global http_client
+    http_client = httpx.AsyncClient(timeout=10.0)
     run_migrations()
     Base.metadata.create_all(bind=engine)
     task1 = asyncio.create_task(reap_the_dead())
@@ -143,6 +147,8 @@ async def lifespan(app: FastAPI):
         task1.cancel()
         task2.cancel()
         await asyncio.gather(task1, task2, return_exceptions=True)
+        if http_client and not http_client.is_closed:
+            await http_client.aclose()
 
 
 app = FastAPI(
@@ -208,14 +214,44 @@ async def add_security_headers(request: Request, call_next):
 # ---------------------------------------------------------------------------
 
 @app.get(
-    "/api/config",
-    summary="Public frontend configuration",
-    description="Returns non-secret configuration values needed by the map frontend.",
+    "/api/tiles/{style}/{z}/{x}/{y}.png",
+    summary="Proxy basemap tiles",
+    description="Proxies basemap tiles from CARTO using the server-side CARTO_API_KEY without exposing it to clients.",
 )
-async def get_config() -> dict:
-    return {
-        "cartoApiKey": os.environ.get("CARTO_API_KEY", ""),
-    }
+async def get_tile(style: str, z: int, x: int, y: int) -> Response:
+    if style not in ("dark", "light"):
+        raise HTTPException(status_code=400, detail="Invalid tile style")
+    if z < 0 or z > 22 or x < 0 or y < 0:
+        raise HTTPException(status_code=400, detail="Invalid tile coordinates")
+
+    carto_key = os.environ.get("CARTO_API_KEY", "")
+    key_param = f"?key={carto_key}" if carto_key else ""
+    sub = ("a", "b", "c", "d")[(x + y) % 4]
+    
+    if style == "light":
+        target_url = f"https://{sub}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png{key_param}"
+    else:
+        target_url = f"https://{sub}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png{key_param}"
+
+    try:
+        if http_client is not None and not http_client.is_closed:
+            res = await http_client.get(target_url, headers={"User-Agent": "allsky-map-server/1.0"})
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.get(target_url, headers={"User-Agent": "allsky-map-server/1.0"})
+
+        if res.status_code == 200:
+            return Response(
+                content=res.content,
+                media_type="image/png",
+                headers={
+                    "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+                },
+            )
+        return Response(status_code=res.status_code, content=res.content, media_type=res.headers.get("content-type", "text/plain"))
+    except Exception as e:
+        logger.warning("Failed to proxy tile %s/%s/%s/%s: %s", style, z, x, y, e)
+        raise HTTPException(status_code=502, detail="Failed to fetch tile from upstream")
 
 @app.websocket("/api/ws")
 async def websocket_endpoint(websocket: WebSocket):
