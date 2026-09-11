@@ -144,9 +144,10 @@ function createMarker(data) {
     hr.style.cssText = 'border:0;border-top:1px solid rgba(255,255,255,0.1);margin:8px 0;';
     container.appendChild(hr);
 
-    // Image — URL is our own proxy endpoint built from camera name, not raw user data
+    // Image — URL is our own proxy endpoint built from camera ID (or name fallback), not raw user data
     if (data.imageUrl) {
-        const proxyImgUrl = `/api/cameras/${encodeURIComponent(data.name)}/image`;
+        const camIdentifier = data.id || data.name;
+        const proxyImgUrl = `/api/cameras/${encodeURIComponent(camIdentifier)}/image`;
 
         const link = el('a', {
             cls: 'allsky-popup-img-link',
@@ -255,7 +256,7 @@ function loadCameras(silent = false) {
     
     // Remember which camera's popup is currently open
     const openCam = allCameras.find(cam => cam.marker && cam.marker.isPopupOpen());
-    const openCamName = openCam ? openCam.name : null;
+    const openCamIdentifier = openCam ? (openCam.id || openCam.name) : null;
     
     return fetch('/api/cameras')
         .then(response => {
@@ -279,8 +280,8 @@ function loadCameras(silent = false) {
             filterCameras();
             
             // Re-open the popup if it was open before
-            if (openCamName) {
-                const newOpenCam = allCameras.find(cam => cam.name === openCamName);
+            if (openCamIdentifier) {
+                const newOpenCam = allCameras.find(cam => (cam.id || cam.name) === openCamIdentifier);
                 if (newOpenCam && newOpenCam.marker) {
                     newOpenCam.marker.openPopup();
                 }
@@ -301,7 +302,7 @@ function loadCameras(silent = false) {
 
 // Dynamically update a camera entry or add a new one from live events
 function updateOrAddCamera(camData) {
-    const existingIdx = allCameras.findIndex(c => c.name === camData.name);
+    const existingIdx = allCameras.findIndex(c => (c.id && camData.id) ? c.id === camData.id : c.name === camData.name);
     const marker = createMarker(camData);
     const newCamEntry = {
         ...camData,
