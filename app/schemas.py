@@ -21,6 +21,7 @@ class CameraResponse(BaseModel):
         populate_by_name=True
     )
 
+    id: Optional[str] = ""
     name: str
     owner: Optional[str] = ""
     lat: Optional[float] = None

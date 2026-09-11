@@ -431,11 +431,19 @@ def test_migration_alter_table(monkeypatch):
     from app.main import run_migrations, engine
     
     mock_conn = MagicMock()
+    mock_rows = MagicMock()
+    mock_rows.fetchall.return_value = []
     # 1. SELECT 1 FROM cameras -> succeeds
     # 2. SELECT site_url_valid -> raises exception
     # 3. ALTER TABLE ... -> succeeds
     # 4. SELECT image_url_valid -> raises exception
     # 5. ALTER TABLE ... -> succeeds
+    # 6. UPDATE site_url_valid
+    # 7. UPDATE image_url_valid
+    # 8. SELECT id -> raises exception
+    # 9. ALTER TABLE id -> succeeds
+    # 10. SELECT api_key, name -> returns mock_rows
+    # 11. CREATE UNIQUE INDEX -> succeeds
     mock_conn.execute.side_effect = [
         None,
         Exception("Column not found"),
@@ -443,6 +451,10 @@ def test_migration_alter_table(monkeypatch):
         Exception("Column not found"),
         None,
         None,
+        None,
+        Exception("Column not found"),
+        None,
+        mock_rows,
         None
     ]
     
@@ -452,7 +464,7 @@ def test_migration_alter_table(monkeypatch):
     
     run_migrations()
     
-    assert mock_conn.execute.call_count == 7
+    assert mock_conn.execute.call_count == 11
 
 def test_migration_table_does_not_exist(monkeypatch):
     from app.main import run_migrations, engine
@@ -621,7 +633,7 @@ def test_camera_image_local_validation_and_cleanup(tmp_path, monkeypatch):
     assert response.status_code == 400
     assert "Invalid or unsupported image format" in response.json()["detail"]
 
-    # 3. Name change with valid image
+    # 3. Upload valid image and verify file keyed by stable camera ID
     png_bytes = b"\x89PNG\r\n\x1a\nfake-png-data"
     import base64
     b64_png = base64.b64encode(png_bytes).decode("utf-8")
@@ -634,20 +646,31 @@ def test_camera_image_local_validation_and_cleanup(tmp_path, monkeypatch):
     # Upload first time with ValidationCam
     client.post("/api/ping", json=payload, headers={"X-API-Key": "validation_key"})
     
-    # Verify old file exists
-    old_hash = hashlib.sha256(b"ValidationCam").hexdigest()
-    old_path = tmp_path / "data" / "images" / f"{old_hash}.img"
-    assert old_path.exists()
+    # Verify file exists keyed by the camera's unique ID
+    cam_id = hashlib.sha256(hashed_key.encode("utf-8")).hexdigest()[:16]
+    image_path = tmp_path / "data" / "images" / f"{cam_id}.img"
+    assert image_path.exists()
+
+    # Image is accessible via /api/cameras/{cam_id}/image and legacy /api/cameras/ValidationCam/image
+    res1 = client.get(f"/api/cameras/{cam_id}/image")
+    assert res1.status_code == 200
+    assert res1.content == png_bytes
+
+    res2 = client.get("/api/cameras/ValidationCam/image")
+    assert res2.status_code == 200
+    assert res2.content == png_bytes
 
     # Rename cam in next ping
     payload["name"] = "NewValidationCam"
     client.post("/api/ping", json=payload, headers={"X-API-Key": "validation_key"})
 
-    # Verify old file is cleaned up, and new file exists
-    assert not old_path.exists()
-    new_hash = hashlib.sha256(b"NewValidationCam").hexdigest()
-    new_path = tmp_path / "data" / "images" / f"{new_hash}.img"
-    assert new_path.exists()
+    # The image path is tied to the camera's stable ID, so it still exists
+    assert image_path.exists()
+
+    # Accessible via the new name too
+    res3 = client.get("/api/cameras/NewValidationCam/image")
+    assert res3.status_code == 200
+    assert res3.content == png_bytes
 
 
 def test_websocket_connection_and_broadcast():
@@ -895,5 +918,115 @@ def test_get_tile_upstream_exception():
     with patch("httpx.AsyncClient.get", side_effect=Exception("Network error")):
         res = client.get("/api/tiles/dark/2/1/1.png")
         assert res.status_code == 502
+
+
+def test_same_name_different_cameras_isolated_images(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "base_dir", str(tmp_path))
+    client = TestClient(app_module.app)
+
+    # 1. Register two different cameras
+    reg1 = client.post("/api/register")
+    assert reg1.status_code == 200
+    key1 = reg1.json()["api_key"]
+
+    reg2 = client.post("/api/register")
+    assert reg2.status_code == 200
+    key2 = reg2.json()["api_key"]
+
+    import base64
+    png_bytes = b"\x89PNG\r\n\x1a\nCam1Image"
+    jpeg_bytes = b"\xff\xd8\xffCam2Image"
+    b64_png = base64.b64encode(png_bytes).decode("utf-8")
+    b64_jpeg = base64.b64encode(jpeg_bytes).decode("utf-8")
+
+    # 2. Both ping with the SAME name ("My Indi-Allsky Camera"), but different locations
+    p1 = client.post("/api/ping", json={
+        "name": "My Indi-Allsky Camera",
+        "owner": "Alice",
+        "lat": 48.26,
+        "lng": 16.63,
+        "imageBase64": b64_png
+    }, headers={"X-API-Key": key1})
+    assert p1.status_code == 200
+
+    p2 = client.post("/api/ping", json={
+        "name": "My Indi-Allsky Camera",
+        "owner": "Bob",
+        "lat": 47.66,
+        "lng": 17.65,
+        "imageBase64": b64_jpeg
+    }, headers={"X-API-Key": key2})
+    assert p2.status_code == 200
+
+    # 3. Retrieve camera list
+    cams_res = client.get("/api/cameras")
+    assert cams_res.status_code == 200
+    cams = cams_res.json()
+    my_cams = [c for c in cams if c["name"] == "My Indi-Allsky Camera"]
+    assert len(my_cams) == 2
+
+    alice_cam = next(c for c in my_cams if c["owner"] == "Alice")
+    bob_cam = next(c for c in my_cams if c["owner"] == "Bob")
+
+    assert alice_cam["id"] != bob_cam["id"]
+
+    # 4. Verify images are completely isolated and never overwritten
+    img1 = client.get(f"/api/cameras/{alice_cam['id']}/image")
+    assert img1.status_code == 200
+    assert img1.headers["Content-Type"] == "image/png"
+    assert img1.content == png_bytes
+
+    img2 = client.get(f"/api/cameras/{bob_cam['id']}/image")
+    assert img2.status_code == 200
+    assert img2.headers["Content-Type"] == "image/jpeg"
+    assert img2.content == jpeg_bytes
+
+
+def test_seamless_migration_populates_id_and_copies_images(tmp_path, monkeypatch):
+    import shutil
+    from sqlalchemy import text
+    monkeypatch.setattr(app_module, "base_dir", str(tmp_path))
+    monkeypatch.setattr(app_module, "engine", test_engine)
+
+    db = TestSessionLocal()
+    hashed_key = hashlib.sha256("legacy_key_123".encode("utf-8")).hexdigest()
+    # Insert legacy camera with id = None
+    cam = CameraDB(api_key=hashed_key, name="LegacyCam", owner="OldOwner", id=None, image_url="local", image_url_valid=True)
+    db.add(cam)
+    db.commit()
+    # Explicitly set id to NULL via raw SQL to simulate pre-migration database
+    db.execute(text("UPDATE cameras SET id = NULL WHERE api_key = :ak"), {"ak": hashed_key})
+    db.commit()
+    db.close()
+
+    # Create old image file on disk at data/images/{sha256(name)}.img
+    legacy_hash = hashlib.sha256(b"LegacyCam").hexdigest()
+    image_dir = tmp_path / "data" / "images"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    old_file = image_dir / f"{legacy_hash}.img"
+    legacy_content = b"\x89PNG\r\n\x1a\nLegacyImageData"
+    old_file.write_bytes(legacy_content)
+
+    # Run migrations
+    app_module.run_migrations()
+
+    # Verify ID is now populated
+    db = TestSessionLocal()
+    migrated_cam = db.query(CameraDB).filter(CameraDB.api_key == hashed_key).first()
+    expected_id = hashlib.sha256(hashed_key.encode("utf-8")).hexdigest()[:16]
+    assert migrated_cam.id == expected_id
+    db.close()
+
+    # Verify new ID image file was created and contains the legacy content
+    new_file = image_dir / f"{expected_id}.img"
+    assert new_file.exists()
+    assert new_file.read_bytes() == legacy_content
+
+    # Verify API serves image using new ID
+    client = TestClient(app_module.app)
+    res = client.get(f"/api/cameras/{expected_id}/image")
+    assert res.status_code == 200
+    assert res.content == legacy_content
+
 
 

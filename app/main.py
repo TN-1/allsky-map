@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import shutil
 import time
 import uuid
 import html
@@ -24,6 +25,9 @@ from app.ssrf import is_safe_url, resolve_safe_url
 # Configure logging (M-4)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+base_dir   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+static_dir = os.path.join(base_dir, "static")
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +56,38 @@ def run_migrations():
                 # Ensure existing entries with non-empty URLs start as valid
                 conn.execute(text("UPDATE cameras SET site_url_valid = 1 WHERE (site_url_valid IS NULL OR site_url_valid = 0) AND site_url IS NOT NULL AND site_url != ''"))
                 conn.execute(text("UPDATE cameras SET image_url_valid = 1 WHERE (image_url_valid IS NULL OR image_url_valid = 0) AND image_url IS NOT NULL AND image_url != ''"))
+
+                try:
+                    conn.execute(text("SELECT id FROM cameras LIMIT 1"))
+                except Exception:
+                    conn.execute(text("ALTER TABLE cameras ADD COLUMN id VARCHAR(32)"))
+
+                # Populate missing IDs for any existing records
+                rows = conn.execute(text("SELECT api_key, name FROM cameras WHERE id IS NULL OR id = ''")).fetchall()
+                image_dir = os.path.join(base_dir, "data", "images")
+                for row in rows:
+                    ak = row[0]
+                    cname = row[1]
+                    public_id = hashlib.sha256(ak.encode("utf-8")).hexdigest()[:16]
+                    conn.execute(
+                        text("UPDATE cameras SET id = :id WHERE api_key = :api_key"),
+                        {"id": public_id, "api_key": ak}
+                    )
+                    # Seamlessly migrate existing images on disk to the new ID-keyed filename
+                    if cname:
+                        try:
+                            old_hash = hashlib.sha256(cname.encode("utf-8")).hexdigest()
+                            old_path = os.path.join(image_dir, f"{old_hash}.img")
+                            new_path = os.path.join(image_dir, f"{public_id}.img")
+                            if os.path.exists(old_path) and not os.path.exists(new_path):
+                                shutil.copyfile(old_path, new_path)
+                        except Exception as exc:
+                            logger.warning("Failed to migrate image file for camera %s: %s", cname, exc)
+
+                try:
+                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_cameras_id ON cameras (id)"))
+                except Exception:
+                    pass
     except Exception as e:
         logger.exception("Database migration failed: %s", e)
         print(f"Migration error: {e}")
@@ -276,8 +312,9 @@ async def register_camera(request: Request, db: Session = Depends(get_db)) -> di
 
     raw_key    = f"allsky_live_{uuid.uuid4()}"
     hashed_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+    public_id  = hashlib.sha256(hashed_key.encode("utf-8")).hexdigest()[:16]
 
-    new_entry = CameraDB(api_key=hashed_key, last_seen=datetime.now(timezone.utc))
+    new_entry = CameraDB(id=public_id, api_key=hashed_key, last_seen=datetime.now(timezone.utc))
     db.add(new_entry)
     db.commit()
     return {"api_key": raw_key}
@@ -316,6 +353,9 @@ async def update_camera(
     if not cam:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
+    if not cam.id:
+        cam.id = hashlib.sha256(cam.api_key.encode("utf-8")).hexdigest()[:16]
+
     old_name = cam.name
 
     cam.name      = data.name
@@ -338,10 +378,9 @@ async def update_camera(
             raise HTTPException(status_code=400, detail="Invalid or unsupported image format")
 
         try:
-            hashed_name = hashlib.sha256(data.name.encode("utf-8")).hexdigest()
             image_dir = os.path.join(base_dir, "data", "images")
             os.makedirs(image_dir, exist_ok=True)
-            image_path = os.path.join(image_dir, f"{hashed_name}.img")
+            image_path = os.path.join(image_dir, f"{cam.id}.img")
             
             with open(image_path, "wb") as f:
                 f.write(decoded_image)
@@ -351,21 +390,6 @@ async def update_camera(
         except Exception as e:
             logger.exception("Failed to save uploaded image: %s", e)
             raise HTTPException(status_code=500, detail="Failed to save image")
-    
-    # Clean up or rename old file if name changed
-    if old_name and old_name != data.name:
-        try:
-            old_hash = hashlib.sha256(old_name.encode("utf-8")).hexdigest()
-            old_path = os.path.join(base_dir, "data", "images", f"{old_hash}.img")
-            if os.path.exists(old_path):
-                new_hash = hashlib.sha256(data.name.encode("utf-8")).hexdigest()
-                new_path = os.path.join(base_dir, "data", "images", f"{new_hash}.img")
-                if not os.path.exists(new_path):
-                    os.rename(old_path, new_path)
-                else:
-                    os.remove(old_path)
-        except Exception:
-            pass
 
     cam.last_seen = datetime.now(timezone.utc)
     cam.status    = "online"
@@ -419,32 +443,50 @@ def default_placeholder_image() -> Response:
 
 
 @app.get(
-    "/api/cameras/{camera_name}/image",
+    "/api/cameras/{camera_identifier}/image",
     summary="Get camera image",
-    description="Serves the locally uploaded camera image.",
+    description="Serves the locally uploaded camera image by camera ID or name.",
 )
 async def get_camera_image(
-    camera_name: str,
+    camera_identifier: str,
     request: Request,
     db: Session = Depends(get_db),
 ) -> Response:
     await image_limiter.check(request)
 
-    cam = db.query(CameraDB).filter(CameraDB.name == camera_name).first()
+    cam = db.query(CameraDB).filter(CameraDB.id == camera_identifier).first()
     if not cam:
-        return default_placeholder_image()
+        cam = db.query(CameraDB).filter(CameraDB.name == camera_identifier).first()
 
-    hashed_name = hashlib.sha256(camera_name.encode("utf-8")).hexdigest()
     image_dir = os.path.join(base_dir, "data", "images")
-    image_path = os.path.join(image_dir, f"{hashed_name}.img")
-    if os.path.exists(image_path):
+    image_path = None
+
+    if cam:
+        if cam.id:
+            cand = os.path.join(image_dir, f"{cam.id}.img")
+            if os.path.exists(cand):
+                image_path = cand
+        if not image_path and cam.name:
+            hashed_name = hashlib.sha256(cam.name.encode("utf-8")).hexdigest()
+            cand = os.path.join(image_dir, f"{hashed_name}.img")
+            if os.path.exists(cand):
+                image_path = cand
+    else:
+        cand_id = os.path.join(image_dir, f"{camera_identifier}.img")
+        hashed_id = os.path.join(image_dir, f"{hashlib.sha256(camera_identifier.encode('utf-8')).hexdigest()}.img")
+        if os.path.exists(cand_id):
+            image_path = cand_id
+        elif os.path.exists(hashed_id):
+            image_path = hashed_id
+
+    if image_path and os.path.exists(image_path):
         try:
             with open(image_path, "rb") as f:
                 header = f.read(16)
             content_type = detect_image_type(header) or "image/jpeg"
             return FileResponse(image_path, media_type=content_type)
         except Exception as exc:
-            logger.warning("Failed to read local image for camera %r: %s", camera_name, exc)
+            logger.warning("Failed to read local image for camera %r: %s", camera_identifier, exc)
             return default_placeholder_image()
 
     return default_placeholder_image()
@@ -456,15 +498,18 @@ async def get_camera_image(
 # ---------------------------------------------------------------------------
 
 @app.get(
-    "/api/cameras/{camera_name}/widget",
+    "/api/cameras/{camera_identifier}/widget",
     summary="Get camera status widget",
-    description="Returns an SVG status card for the given camera.",
+    description="Returns an SVG status card for the given camera by ID or name.",
 )
-async def get_camera_widget(camera_name: str, db: Session = Depends(get_db)) -> Response:
-    cam = db.query(CameraDB).filter(CameraDB.name == camera_name).first()
+async def get_camera_widget(camera_identifier: str, db: Session = Depends(get_db)) -> Response:
+    cam = db.query(CameraDB).filter(CameraDB.id == camera_identifier).first()
+    if not cam:
+        cam = db.query(CameraDB).filter(CameraDB.name == camera_identifier).first()
     if not cam:
         raise HTTPException(status_code=404, detail="Camera not found")
 
+    camera_name  = cam.name or "Unknown Camera"
     # Whitelist status to prevent DB-tampered values from leaking into SVG
     status       = cam.status if cam.status in ("online", "offline") else "offline"
     owner        = cam.owner or "Unknown Owner"
@@ -496,6 +541,5 @@ async def get_camera_widget(camera_name: str, db: Session = Depends(get_db)) -> 
 # ---------------------------------------------------------------------------
 # Static file mount
 # ---------------------------------------------------------------------------
-base_dir   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-static_dir = os.path.join(base_dir, "static")
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+
