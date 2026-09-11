@@ -11,7 +11,7 @@ from typing import List
 from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response, FileResponse
+from fastapi.responses import JSONResponse, Response, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -456,7 +456,9 @@ async def get_camera_image(
 
     cam = db.query(CameraDB).filter(CameraDB.id == camera_identifier).first()
     if not cam:
-        cam = db.query(CameraDB).filter(CameraDB.name == camera_identifier).first()
+        cam_by_name = db.query(CameraDB).filter(CameraDB.name == camera_identifier).first()
+        if cam_by_name and cam_by_name.id:
+            return RedirectResponse(url=f"/api/cameras/{cam_by_name.id}/image", status_code=307)
 
     image_dir = os.path.join(base_dir, "data", "images")
     image_path = None

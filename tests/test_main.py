@@ -1028,5 +1028,12 @@ def test_seamless_migration_populates_id_and_copies_images(tmp_path, monkeypatch
     assert res.status_code == 200
     assert res.content == legacy_content
 
+    # Verify requesting by camera name redirects to the canonical ID URL with HTTP 307
+    client_no_redirect = TestClient(app_module.app, follow_redirects=False)
+    res_redir = client_no_redirect.get("/api/cameras/LegacyCam/image")
+    assert res_redir.status_code == 307
+    assert res_redir.headers["location"] == f"/api/cameras/{expected_id}/image"
+
+
 
 
