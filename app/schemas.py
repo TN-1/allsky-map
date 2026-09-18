@@ -35,10 +35,10 @@ class CameraResponse(BaseModel):
     site_url_valid: Optional[bool] = Field(default=True, exclude=True)
     image_url_valid: Optional[bool] = Field(default=True, exclude=True)
 
-    # Round coordinates to 2 decimal places to protect owner privacy
+    # Format lat/lng to default to 0.0 if None
     @field_serializer("lat", "lng")
-    def serialize_coords(self, val: float) -> float:
-        return round(val, 2) if val is not None else 0.0
+    def serialize_coords(self, val: Optional[float]) -> float:
+        return val if val is not None else 0.0
 
     # Format owner to default to empty string if None
     @field_serializer("owner")
