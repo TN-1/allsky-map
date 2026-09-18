@@ -123,8 +123,8 @@ def test_get_cameras_coordinate_fuzzing():
     assert len(res_data) == 3
     
     cam1_res = [c for c in res_data if c["name"] == "Cam 1"][0]
-    assert cam1_res["lat"] == 10.12  # Fuzzed to 2 decimals
-    assert cam1_res["lng"] == 20.68  # Fuzzed to 2 decimals
+    assert cam1_res["lat"] == 10.12345
+    assert cam1_res["lng"] == 20.67891
     assert cam1_res["siteUrl"] == "http://site1.com"
     assert cam1_res["imageUrl"] == "http://site1.com/img.jpg"
     assert cam1_res["lastSeen"] != ""
@@ -703,9 +703,8 @@ def test_websocket_connection_and_broadcast():
         message = websocket.receive_json()
         assert message["name"] == "WebSocket Test Cam"
         assert message["owner"] == "Test Owner"
-        # Coordinates should be fuzzed/rounded to 2 decimal places in CameraResponse
-        assert message["lat"] == 12.35
-        assert message["lng"] == 78.90
+        assert message["lat"] == 12.3456
+        assert message["lng"] == 78.9012
         assert message["status"] == "online"
 
 
