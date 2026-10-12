@@ -13,6 +13,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import ClientDisconnect
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -136,7 +137,7 @@ class InMemoryRateLimiter:
 
 register_limiter = InMemoryRateLimiter(limit=5, window=60)
 ping_limiter     = InMemoryRateLimiter(limit=60, window=60)
-image_limiter    = InMemoryRateLimiter(limit=30, window=60)   # new: rate-limit image proxy
+image_limiter    = InMemoryRateLimiter(limit=180, window=60)   # relaxed: rate-limit image proxy
 
 
 # ---------------------------------------------------------------------------
@@ -207,11 +208,19 @@ MAX_API_KEY_LEN  = 200               # allsky_live_<uuid> is 48 chars; generous 
 
 @app.middleware("http")
 async def limit_payload_size(request: Request, call_next):
+    # Only inspect bodies for request methods that can transmit payloads
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_PAYLOAD_SIZE:
         return JSONResponse(status_code=413, content={"detail": "Request Entity Too Large"})
     # Also cap chunked-encoded bodies by buffering and re-injecting
-    body = await request.body()
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        return Response(status_code=499)
+
     if len(body) > MAX_PAYLOAD_SIZE:
         return JSONResponse(status_code=413, content={"detail": "Request Entity Too Large"})
     async def receive():

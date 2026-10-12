@@ -1034,5 +1034,18 @@ def test_seamless_migration_populates_id_and_copies_images(tmp_path, monkeypatch
     assert res_redir.headers["location"] == f"/api/cameras/{expected_id}/image"
 
 
+def test_limit_payload_size_client_disconnect(monkeypatch):
+    from starlette.requests import ClientDisconnect
+
+    async def mock_body(self):
+        raise ClientDisconnect()
+
+    monkeypatch.setattr("starlette.requests.Request.body", mock_body)
+    client = TestClient(app_module.app, raise_server_exceptions=False)
+    response = client.post("/api/ping", content=b"test-body")
+    assert response.status_code == 499
+
+
+
 
 
