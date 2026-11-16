@@ -1,6 +1,7 @@
 import os
 import pytest
 import hashlib
+import uuid
 from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
@@ -1044,6 +1045,66 @@ def test_limit_payload_size_client_disconnect(monkeypatch):
     client = TestClient(app_module.app, raise_server_exceptions=False)
     response = client.post("/api/ping", content=b"test-body")
     assert response.status_code == 499
+
+
+def test_cross_origin_resource_policy_header():
+    client = TestClient(app_module.app)
+    # Default endpoints should serve CORP same-origin
+    res_img = client.get("/api/cameras/any-cam/image")
+    assert res_img.headers.get("cross-origin-resource-policy") == "same-origin"
+
+    # SVG status widget must allow cross-origin embedding
+    db = TestSessionLocal()
+    cam = CameraDB(api_key="corp_widget_key", name="CorpWidgetCam", status="online", owner="Alice")
+    db.add(cam)
+    db.commit()
+    db.close()
+
+    res_widget = client.get("/api/cameras/CorpWidgetCam/widget")
+    assert res_widget.status_code == 200
+    assert res_widget.headers.get("cross-origin-resource-policy") == "cross-origin"
+
+
+def test_image_cross_origin_hotlinking_protection():
+    client = TestClient(app_module.app)
+
+    # 1. Blocked via Sec-Fetch-Site: cross-site
+    res_cross_site = client.get(
+        "/api/cameras/any-cam/image",
+        headers={"sec-fetch-site": "cross-site"},
+    )
+    assert res_cross_site.status_code == 403
+    assert "Cross-origin hotlinking is forbidden" in res_cross_site.json()["detail"]
+
+    # 2. Blocked via cross-site Referer
+    res_bad_referer = client.get(
+        "/api/cameras/any-cam/image",
+        headers={"referer": "https://hostile-site.com/gallery.html"},
+    )
+    assert res_bad_referer.status_code == 403
+    assert "Cross-origin hotlinking is forbidden" in res_bad_referer.json()["detail"]
+
+    # 3. Allowed via same-origin Sec-Fetch-Site
+    res_same_origin = client.get(
+        "/api/cameras/any-cam/image",
+        headers={"sec-fetch-site": "same-origin"},
+    )
+    assert res_same_origin.status_code == 200
+
+    # 4. Allowed via direct navigation (Sec-Fetch-Site: none, no referer)
+    res_direct = client.get(
+        "/api/cameras/any-cam/image",
+        headers={"sec-fetch-site": "none"},
+    )
+    assert res_direct.status_code == 200
+
+    # 5. Allowed via matching Referer
+    res_good_referer = client.get(
+        "/api/cameras/any-cam/image",
+        headers={"referer": "http://testserver/map"},
+    )
+    assert res_good_referer.status_code == 200
+
 
 
 

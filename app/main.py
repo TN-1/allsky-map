@@ -6,6 +6,7 @@ import shutil
 import time
 import uuid
 import html
+import urllib.parse
 from datetime import datetime, timezone
 from typing import List
 from contextlib import asynccontextmanager
@@ -247,6 +248,10 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=(), payment=()"
+    if request.url.path.startswith("/api/cameras/") and request.url.path.endswith("/widget"):
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    elif "Cross-Origin-Resource-Policy" not in response.headers:
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     # CORS is intentionally NOT configured here.  /api/ping is called by server-side
     # indi-allsky software (not a browser), so it needs no CORS allowance.
     # Do NOT add CORSMiddleware with allow_origins=["*"] — that would expose the
@@ -451,6 +456,40 @@ def default_placeholder_image() -> Response:
     return Response(content=svg, media_type="image/svg+xml")
 
 
+def verify_same_origin_image_request(request: Request) -> None:
+    """Blocks cross-origin hotlinking by verifying Fetch Metadata and Referer headers."""
+    # 1. Fetch metadata check: Sec-Fetch-Site (modern browsers)
+    sec_fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if sec_fetch_site == "cross-site":
+        logger.warning(
+            "Blocked cross-origin image request (sec-fetch-site=%s) from IP %s",
+            sec_fetch_site,
+            request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(status_code=403, detail="Cross-origin hotlinking is forbidden")
+
+    # 2. Referer verification fallback (when provided)
+    referer = request.headers.get("referer")
+    if referer:
+        try:
+            parsed = urllib.parse.urlparse(referer)
+            referer_host = (parsed.hostname or "").lower()
+            current_host = (request.headers.get("x-forwarded-host") or request.base_url.hostname or "").split(":")[0].lower()
+            if referer_host and current_host and referer_host != current_host:
+                if not (referer_host.endswith(f".{current_host}") or current_host.endswith(f".{referer_host}")):
+                    logger.warning(
+                        "Blocked cross-origin image request (referer=%s, host=%s) from IP %s",
+                        referer,
+                        current_host,
+                        request.client.host if request.client else "unknown",
+                    )
+                    raise HTTPException(status_code=403, detail="Cross-origin hotlinking is forbidden")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+
 @app.get(
     "/api/cameras/{camera_identifier}/image",
     summary="Get camera image",
@@ -461,6 +500,7 @@ async def get_camera_image(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Response:
+    verify_same_origin_image_request(request)
     await image_limiter.check(request)
 
     cam = db.query(CameraDB).filter(CameraDB.id == camera_identifier).first()
