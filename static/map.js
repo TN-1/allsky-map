@@ -174,9 +174,11 @@ function createMarker(data) {
         link.appendChild(img);
         container.appendChild(link);
 
-        // Inject src on first popup open — subsequent opens reuse the cached response
+        // Inject src on first popup open — subsequent opens reuse the cached response.
+        // Must use getAttribute('src') not img.src: the DOM property always resolves to
+        // an absolute URL (the page URL when no attribute is set), which is always truthy.
         marker.on('popupopen', () => {
-            if (!img.src) {
+            if (!img.getAttribute('src')) {
                 img.src = proxyImgUrl;
             }
         });
