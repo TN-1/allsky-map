@@ -20,7 +20,7 @@ html, body {
 /* Styling for Error image replacement card */
 .allsky-img-err {
     width: 100%;
-    aspect-ratio: 16 / 9;
+    min-height: 60px;
     margin-top: 8px;
     border-radius: 8px;
     font-family: system-ui, -apple-system, sans-serif;
@@ -37,8 +37,9 @@ html, body {
 
 .allsky-popup-img {
     width: 100%;
-    aspect-ratio: 16 / 9;
-    object-fit: cover;
+    height: auto;      /* Natural height — adapts to any aspect ratio */
+    max-height: 320px; /* Cap very tall images to avoid an overly long popup */
+    object-fit: contain;
     border-radius: 8px;
     margin-top: 8px;
     display: block;

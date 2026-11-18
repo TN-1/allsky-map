@@ -159,9 +159,11 @@ function createMarker(data) {
             }
         });
 
+        // Lazy load: omit src here; inject it only when the popup is opened.
+        // This prevents every camera image from being fetched on page load.
         const img = el('img', {
             cls: 'allsky-popup-img',
-            attrs: { src: proxyImgUrl, alt: `${data.name} latest image` }
+            attrs: { alt: `${data.name} latest image` }
         });
 
         // Safe error handler — no inline onerror= attribute
@@ -171,6 +173,13 @@ function createMarker(data) {
 
         link.appendChild(img);
         container.appendChild(link);
+
+        // Inject src on first popup open — subsequent opens reuse the cached response
+        marker.on('popupopen', () => {
+            if (!img.src) {
+                img.src = proxyImgUrl;
+            }
+        });
     }
 
     // Site URL — prominent "Go To Site" button under image
