@@ -147,12 +147,13 @@ function createMarker(data) {
     // Image — URL is our own proxy endpoint built from camera ID (or name fallback), not raw user data
     if (data.imageUrl) {
         const camIdentifier = data.id || data.name;
-        const proxyImgUrl = `/api/cameras/${encodeURIComponent(camIdentifier)}/image`;
+        const proxyThumbUrl = `/api/cameras/${encodeURIComponent(camIdentifier)}/image`;
+        const proxyFullUrl  = `/api/cameras/${encodeURIComponent(camIdentifier)}/image/full`;
 
         const link = el('a', {
             cls: 'allsky-popup-img-link',
             attrs: {
-                href: proxyImgUrl,
+                href: proxyFullUrl,
                 target: '_blank',
                 rel: 'noopener noreferrer',
                 'aria-label': `View full size image for ${data.name}`
@@ -179,7 +180,7 @@ function createMarker(data) {
         // an absolute URL (the page URL when no attribute is set), which is always truthy.
         marker.on('popupopen', () => {
             if (!img.getAttribute('src')) {
-                img.src = proxyImgUrl;
+                img.src = proxyThumbUrl;
             }
         });
     }

@@ -30,6 +30,7 @@ class CameraResponse(BaseModel):
     image_url: Optional[str] = ""
     status: str
     last_seen: Optional[datetime] = None
+    allow_research: Optional[bool] = True
     
     # Load validation flags from DB, but exclude them from the JSON response
     site_url_valid: Optional[bool] = Field(default=True, exclude=True)
@@ -82,6 +83,7 @@ class CameraPing(BaseModel):
     lng: float = Field(..., ge=-180.0, le=180.0)
     site_url: str = Field("", max_length=2000)
     image_base64: Optional[str] = Field(None, description="Base64 encoded image content")
+    allow_research: Optional[bool] = Field(default=None, description="Opt-in/opt-out of research data aggregation")
 
     @field_validator("site_url", mode="before")
     @classmethod

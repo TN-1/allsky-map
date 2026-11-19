@@ -22,6 +22,7 @@ class CameraDB(Base):
     status: Mapped[str] = mapped_column(String, default="online")
     site_url_valid: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     image_url_valid: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_research: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     def __init__(self, **kwargs):
         if "id" not in kwargs and "api_key" in kwargs and kwargs["api_key"]:

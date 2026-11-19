@@ -1,5 +1,7 @@
 import asyncio
 import hashlib
+import io
+import json
 import logging
 import os
 import shutil
@@ -7,22 +9,29 @@ import time
 import uuid
 import html
 import urllib.parse
+import zipfile
 from datetime import datetime, timezone
 from typing import List
 from contextlib import asynccontextmanager
 import httpx
-from fastapi import FastAPI, HTTPException, Header, Depends, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response, FileResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Header, Depends, Request, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import JSONResponse, Response, FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import ClientDisconnect
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+try:
+    from PIL import Image as PilImage
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 from app.database import engine, Base, get_db
 from app.models import CameraDB
 from app.schemas import CameraResponse, CameraPing
 from app.tasks import reap_the_dead, check_dead_links
 from app.ssrf import is_safe_url, resolve_safe_url
+from app.solar import is_nighttime
 
 # Configure logging (M-4)
 logging.basicConfig(level=logging.INFO)
@@ -55,9 +64,15 @@ def run_migrations():
                 except Exception:
                     conn.execute(text("ALTER TABLE cameras ADD COLUMN image_url_valid BOOLEAN DEFAULT 1 NOT NULL"))
 
+                try:
+                    conn.execute(text("SELECT allow_research FROM cameras LIMIT 1"))
+                except Exception:
+                    conn.execute(text("ALTER TABLE cameras ADD COLUMN allow_research BOOLEAN DEFAULT 1 NOT NULL"))
+
                 # Ensure existing entries with non-empty URLs start as valid
                 conn.execute(text("UPDATE cameras SET site_url_valid = 1 WHERE (site_url_valid IS NULL OR site_url_valid = 0) AND site_url IS NOT NULL AND site_url != ''"))
                 conn.execute(text("UPDATE cameras SET image_url_valid = 1 WHERE (image_url_valid IS NULL OR image_url_valid = 0) AND image_url IS NOT NULL AND image_url != ''"))
+                conn.execute(text("UPDATE cameras SET allow_research = 1 WHERE allow_research IS NULL"))
 
                 try:
                     conn.execute(text("SELECT id FROM cameras LIMIT 1"))
@@ -378,6 +393,8 @@ async def update_camera(
     cam.lng       = data.lng
     cam.site_url  = data.site_url
     cam.site_url_valid = True
+    if data.allow_research is not None:
+        cam.allow_research = data.allow_research
 
     if data.image_base64 and data.image_base64.strip():
         import base64
@@ -395,10 +412,20 @@ async def update_camera(
             image_dir = os.path.join(base_dir, "data", "images")
             os.makedirs(image_dir, exist_ok=True)
             image_path = os.path.join(image_dir, f"{cam.id}.img")
-            
+
             with open(image_path, "wb") as f:
                 f.write(decoded_image)
-            
+
+            # Generate and persist a reduced-resolution thumbnail for map popups
+            # and the bulk export endpoint. Falls back gracefully if Pillow is absent.
+            thumb_bytes = make_thumbnail(decoded_image)
+            if thumb_bytes:
+                thumb_path = os.path.join(image_dir, f"{cam.id}.thumb.img")
+                with open(thumb_path, "wb") as f:
+                    f.write(thumb_bytes)
+            else:
+                logger.debug("Skipping thumbnail for camera %s (Pillow unavailable or decode failed)", cam.id)
+
             cam.image_url = "local"
             cam.image_url_valid = True
         except Exception as e:
@@ -430,6 +457,10 @@ async def update_camera(
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_BYTES     = 20 * 1024 * 1024  # 20 MB
 
+# Thumbnail transcode settings
+THUMB_MAX_PX  = 1280   # longest axis cap in pixels
+THUMB_QUALITY = 75     # JPEG quality (0-95); 75 is a good research/bandwidth tradeoff
+
 def detect_image_type(data: bytes) -> str | None:
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
@@ -454,6 +485,25 @@ def default_placeholder_image() -> Response:
         "</svg>"
     )
     return Response(content=svg, media_type="image/svg+xml")
+
+
+def make_thumbnail(raw_bytes: bytes) -> bytes | None:
+    """Re-encode raw image bytes to a JPEG thumbnail capped at THUMB_MAX_PX on the longest axis.
+    Returns None if Pillow is unavailable or the source cannot be decoded (e.g. placeholder GIF)."""
+    if not PIL_AVAILABLE:
+        return None
+    try:
+        with PilImage.open(io.BytesIO(raw_bytes)) as img:
+            # Convert palette/RGBA modes to RGB for clean JPEG output
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            img.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX), PilImage.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=THUMB_QUALITY, optimize=True)
+            return buf.getvalue()
+    except Exception as exc:
+        logger.debug("Thumbnail generation failed: %s", exc)
+        return None
 
 
 def verify_same_origin_image_request(request: Request) -> None:
@@ -514,9 +564,12 @@ async def get_camera_image(
 
     if cam:
         if cam.id:
-            cand = os.path.join(image_dir, f"{cam.id}.img")
-            if os.path.exists(cand):
-                image_path = cand
+            # Prefer the pre-transcoded thumbnail; fall back to the raw original
+            for suffix in (f"{cam.id}.thumb.img", f"{cam.id}.img"):
+                cand = os.path.join(image_dir, suffix)
+                if os.path.exists(cand):
+                    image_path = cand
+                    break
         if not image_path and cam.name:
             hashed_name = hashlib.sha256(cam.name.encode("utf-8")).hexdigest()
             cand = os.path.join(image_dir, f"{hashed_name}.img")
@@ -542,6 +595,210 @@ async def get_camera_image(
 
     return default_placeholder_image()
 
+
+@app.get(
+    "/api/cameras/{camera_identifier}/image/full",
+    summary="Get full-resolution camera image",
+    description="Serves the original full-resolution uploaded image. Used when a user clicks through from the map popup.",
+)
+async def get_camera_image_full(
+    camera_identifier: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_same_origin_image_request(request)
+    await image_limiter.check(request)
+
+    cam = db.query(CameraDB).filter(CameraDB.id == camera_identifier).first()
+    if not cam:
+        cam_by_name = db.query(CameraDB).filter(CameraDB.name == camera_identifier).first()
+        if cam_by_name and cam_by_name.id:
+            return RedirectResponse(url=f"/api/cameras/{cam_by_name.id}/image/full", status_code=307)
+
+    image_dir = os.path.join(base_dir, "data", "images")
+    image_path = None
+
+    if cam and cam.id:
+        # Always serve the raw original — never the thumbnail
+        cand = os.path.join(image_dir, f"{cam.id}.img")
+        if os.path.exists(cand):
+            image_path = cand
+    if not image_path and cam and cam.name:
+        hashed_name = hashlib.sha256(cam.name.encode("utf-8")).hexdigest()
+        cand = os.path.join(image_dir, f"{hashed_name}.img")
+        if os.path.exists(cand):
+            image_path = cand
+
+    if image_path and os.path.exists(image_path):
+        try:
+            with open(image_path, "rb") as f:
+                header = f.read(16)
+            content_type = detect_image_type(header) or "image/jpeg"
+            return FileResponse(image_path, media_type=content_type)
+        except Exception as exc:
+            logger.warning("Failed to read full image for camera %r: %s", camera_identifier, exc)
+            return default_placeholder_image()
+
+    return default_placeholder_image()
+
+
+
+# ---------------------------------------------------------------------------
+# Bulk image export — compressed ZIP for research/bulk consumers
+# ---------------------------------------------------------------------------
+
+# Read shared secrets from the environment. Supports a comma-separated list of
+# keys in BULK_API_KEYS, optionally with labels in 'key:label' format (e.g. 'key1:Alice,key2:Bob').
+# Also supports singular BULK_API_KEY for backward compatibility.
+def get_allowed_bulk_keys() -> dict[str, str]:
+    """Returns a dictionary mapping secret_key -> identity_label for access tracking."""
+    raw = os.environ.get("BULK_API_KEYS", "") or os.environ.get("BULK_API_KEY", "")
+    mapping: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" in entry:
+            key, label = entry.split(":", 1)
+            mapping[key.strip()] = label.strip()
+        else:
+            masked_id = hashlib.sha256(entry.encode("utf-8")).hexdigest()[:8]
+            mapping[entry] = f"key_{masked_id}"
+    return mapping
+
+
+def _build_bulk_zip(
+    db: Session,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    min_lng: float | None = None,
+    max_lng: float | None = None,
+    night_only: bool = False,
+) -> bytes:
+    """Build the ZIP archive in memory on demand, honoring allow_research, location bounds, and solar altitude."""
+    image_dir = os.path.join(base_dir, "data", "images")
+    query = db.query(CameraDB).filter(CameraDB.name != None, CameraDB.allow_research == True)
+
+    if min_lat is not None:
+        query = query.filter(CameraDB.lat >= min_lat)
+    if max_lat is not None:
+        query = query.filter(CameraDB.lat <= max_lat)
+    if min_lng is not None:
+        query = query.filter(CameraDB.lng >= min_lng)
+    if max_lng is not None:
+        query = query.filter(CameraDB.lng <= max_lng)
+
+    cameras = query.all()
+
+    if night_only:
+        now_utc = datetime.now(timezone.utc)
+        cameras = [cam for cam in cameras if is_nighttime(cam.lat, cam.lng, now_utc)]
+
+    manifest = []
+    buf = io.BytesIO()
+
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
+        for cam in cameras:
+            # Collect metadata for the manifest regardless of image availability
+            manifest.append({
+                "id":        cam.id,
+                "name":      cam.name,
+                "owner":     cam.owner,
+                "lat":       round(cam.lat, 2) if cam.lat is not None else None,
+                "lng":       round(cam.lng, 2) if cam.lng is not None else None,
+                "status":    cam.status,
+                "last_seen": cam.last_seen.isoformat() if cam.last_seen else None,
+                "site_url":  cam.site_url,
+            })
+
+            if not cam.id:
+                continue
+
+            # Prefer thumbnail; fall back to raw original
+            img_path = None
+            for suffix in (f"{cam.id}.thumb.img", f"{cam.id}.img"):
+                cand = os.path.join(image_dir, suffix)
+                if os.path.exists(cand):
+                    img_path = cand
+                    break
+
+            if not img_path:
+                continue
+
+            try:
+                with open(img_path, "rb") as f:
+                    img_data = f.read()
+
+                # Skip tiny placeholder GIFs (< 100 bytes)
+                if len(img_data) < 100:
+                    continue
+
+                zf.writestr(f"images/{cam.id}.jpg", img_data)
+            except Exception as exc:
+                logger.warning("Bulk export: failed to read image for camera %s: %s", cam.id, exc)
+
+        # Write manifest last so consumers can parse it without extracting images
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+    return buf.getvalue()
+
+
+@app.get(
+    "/api/bulk/images.zip",
+    summary="Bulk image export",
+    description=(
+        "Returns a ZIP archive of all camera thumbnails plus a manifest.json. "
+        "Requires the X-Bulk-Key header matching the BULK_API_KEY env var. "
+        "Allows geographical bounding box filtering, nighttime solar altitude filtering, and excludes cameras opting out of research."
+    ),
+)
+async def bulk_image_export(
+    request: Request,
+    x_bulk_key: str = Header(..., description="Shared secret for bulk export access"),
+    min_lat: float | None = Query(None, ge=-90.0, le=90.0, description="Minimum latitude (-90 to 90)"),
+    max_lat: float | None = Query(None, ge=-90.0, le=90.0, description="Maximum latitude (-90 to 90)"),
+    min_lng: float | None = Query(None, ge=-180.0, le=180.0, description="Minimum longitude (-180 to 180)"),
+    max_lng: float | None = Query(None, ge=-180.0, le=180.0, description="Maximum longitude (-180 to 180)"),
+    night_only: bool = Query(False, description="Filter archive to only include cameras currently in nighttime"),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    import hmac as _hmac
+    valid_keys = get_allowed_bulk_keys()
+    authenticated_identity: str | None = None
+    for key, label in valid_keys.items():
+        if _hmac.compare_digest(x_bulk_key, key):
+            authenticated_identity = label
+
+    if not authenticated_identity:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if min_lat is not None and max_lat is not None and min_lat > max_lat:
+        raise HTTPException(status_code=400, detail="min_lat cannot be greater than max_lat")
+    if min_lng is not None and max_lng is not None and min_lng > max_lng:
+        raise HTTPException(status_code=400, detail="min_lng cannot be greater than max_lng")
+
+    logger.info(
+        "Bulk export: identity [%s] generating ZIP on demand (bounds: lat=[%s, %s], lng=[%s, %s], night_only=%s)",
+        authenticated_identity,
+        min_lat,
+        max_lat,
+        min_lng,
+        max_lng,
+        night_only,
+    )
+    # Execute synchronous DB and disk operations in a worker thread
+    loop = asyncio.get_event_loop()
+    zip_bytes = await loop.run_in_executor(None, _build_bulk_zip, db, min_lat, max_lat, min_lng, max_lng, night_only)
+
+    return StreamingResponse(
+        io.BytesIO(zip_bytes),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": "attachment; filename=\"allsky-images.zip\"",
+            "Content-Length": str(len(zip_bytes)),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
