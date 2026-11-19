@@ -49,7 +49,7 @@ Edit `.env` and set your values:
 
 ```env
 DOMAIN_NAME=allsky-map.com
-ACME_EMAIL=admin@example.com
+ACME_EMAIL=admin@allsky-map.com
 TZ=Australia/Adelaide
 ```
 
@@ -96,9 +96,12 @@ Updates a camera's data and marks it online. Called periodically by `indi-allsky
   "lat": -34.92,
   "lng": 138.60,
   "siteUrl": "https://my-camera-website.com",
-  "imageBase64": "<base64-encoded-image>"
+  "imageBase64": "<base64-encoded-image>",
+  "allowResearch": true
 }
 ```
+
+* `allowResearch` *(optional, default: `true`)*: Set to `false` if the operator wishes to opt out of bulk research data harvesting.
 
 ### `GET /api/cameras`
 Returns all cameras that have pinged at least once.
@@ -106,23 +109,72 @@ Returns all cameras that have pinged at least once.
 ```json
 [
   {
+    "id": "a1b2c3d4e5f67890",
     "name": "My Allsky Camera",
     "owner": "Jane Smith",
     "lat": -34.92,
     "lng": 138.6,
     "siteUrl": "https://my-camera-website.com",
-    "imageUrl": "",
+    "imageUrl": "local",
     "status": "online",
-    "lastSeen": "2025-01-01T00:00:00+00:00"
+    "lastSeen": "2025-01-01T00:00:00+00:00",
+    "allowResearch": true
   }
 ]
 ```
 
-### `GET /api/cameras/{name}/image`
-Returns the proxied live image for a camera (JPEG).
+### `GET /api/cameras/{id_or_name}/image`
+Returns the proxied image thumbnail (JPEG, max 1280px) for a camera.
+
+### `GET /api/cameras/{id_or_name}/image/full`
+Returns the uncompressed original full-resolution image as uploaded by the camera.
 
 ### `GET /api/cameras/{name}/widget`
 Returns an embeddable HTML status card for a camera.
+
+### `GET /api/bulk/images.zip`
+Generates an in-memory ZIP archive of camera thumbnail images and a `manifest.json` metadata summary. Only cameras that have opted in (`allowResearch = true`) are included.
+
+> **Requesting Access:** Access to this endpoint is restricted to preserve server bandwidth and protect community resources. If you are conducting astronomical or atmospheric research and wish to request a bulk API key (`X-Bulk-Key`), please open an issue on the [GitHub repository](https://github.com/TN-1/allsky-map/issues) detailing your project requirements.
+
+**Headers:** `X-Bulk-Key: <YOUR_BULK_KEY>`
+
+**Query Parameters (Optional):**
+- `night_only` (boolean, default: `false`): When `true`, filters cameras to only those currently in nighttime, calculated using solar elevation ($\text{altitude} < 0^\circ$) matching the map terminator overlay.
+- `min_lat` (float, -90.0 to 90.0): Southern boundary
+- `max_lat` (float, -90.0 to 90.0): Northern boundary
+- `min_lng` (float, -180.0 to 180.0): Western boundary
+- `max_lng` (float, -180.0 to 180.0): Eastern boundary
+
+**Example Requests:**
+
+*Download entire global archive:*
+```bash
+curl -sS -H "X-Bulk-Key: <BULK_API_KEY>" \
+  "https://allsky-map.com/api/bulk/images.zip" \
+  -o allsky-images.zip
+```
+
+*Download nighttime-only cameras globally:*
+```bash
+curl -sS -H "X-Bulk-Key: <BULK_API_KEY>" \
+  "https://allsky-map.com/api/bulk/images.zip?night_only=true" \
+  -o allsky-images-night.zip
+```
+
+*Download regional archive (e.g., Australia):*
+```bash
+curl -sS -H "X-Bulk-Key: <BULK_API_KEY>" \
+  "https://allsky-map.com/api/bulk/images.zip?min_lat=-44.0&max_lat=-10.0&min_lng=112.0&max_lng=154.0" \
+  -o allsky-images-aus.zip
+```
+
+*Download regional archive (e.g., Continental United States):*
+```bash
+curl -sS -H "X-Bulk-Key: <BULK_API_KEY>" \
+  "https://allsky-map.com/api/bulk/images.zip?min_lat=24.0&max_lat=50.0&min_lng=-125.0&max_lng=-66.0" \
+  -o allsky-images-usa.zip
+```
 
 ---
 
