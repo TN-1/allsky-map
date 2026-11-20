@@ -138,9 +138,31 @@ class _TelemetryState:
         self.log_handler: logging.Handler | None = None
         self._app: FastAPI | None = None
         self._engine: Engine | None = None
+        self._engine_tracer = None
 
 
 _state = _TelemetryState()
+
+
+def _instrument_sqlalchemy(engine: Engine):
+    """Instrument synchronous SQLAlchemy engine, falling back to EngineTracer if asyncio/greenlet is absent."""
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+    try:
+        SQLAlchemyInstrumentor().instrument(engine=engine, skip_dep_check=True)
+        return None
+    except ImportError:
+        from opentelemetry.instrumentation.sqlalchemy.engine import EngineTracer
+        from opentelemetry.semconv.metrics import MetricInstruments
+
+        tracer = trace.get_tracer("opentelemetry.instrumentation.sqlalchemy")
+        meter = metrics.get_meter("opentelemetry.instrumentation.sqlalchemy")
+        connections_usage = meter.create_up_down_counter(
+            name=MetricInstruments.DB_CLIENT_CONNECTIONS_USAGE,
+            unit="connections",
+            description="The number of connections that are currently in state described by the state attribute.",
+        )
+        return EngineTracer(tracer, engine, connections_usage)
 
 
 def setup_telemetry(app: FastAPI, engine: Engine) -> bool:
@@ -162,7 +184,6 @@ def setup_telemetry(app: FastAPI, engine: Engine) -> bool:
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
     from opentelemetry.instrumentation.logging import LoggingInstrumentor
     from opentelemetry.instrumentation.logging.handler import LoggingHandler
-    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
     from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
     from opentelemetry.sdk.metrics import MeterProvider
@@ -207,7 +228,7 @@ def setup_telemetry(app: FastAPI, engine: Engine) -> bool:
 
     # 4. Auto-instrumentation for FastAPI, SQLAlchemy, and outbound HTTPX
     FastAPIInstrumentor.instrument_app(app)
-    SQLAlchemyInstrumentor().instrument(engine=engine, skip_dep_check=True)
+    _state._engine_tracer = _instrument_sqlalchemy(engine)
     HTTPXClientInstrumentor().instrument()
 
     _state.enabled = True
@@ -239,7 +260,9 @@ def shutdown_telemetry() -> None:
 
         if _state._app is not None:
             FastAPIInstrumentor.uninstrument_app(_state._app)
-        if _state._engine is not None:
+        if _state._engine_tracer is not None:
+            _state._engine_tracer.remove_all_event_listeners()
+        elif _state._engine is not None:
             SQLAlchemyInstrumentor().uninstrument(engine=_state._engine)
         HTTPXClientInstrumentor().uninstrument()
         LoggingInstrumentor().uninstrument()
@@ -263,3 +286,4 @@ def shutdown_telemetry() -> None:
     _state.log_handler = None
     _state._app = None
     _state._engine = None
+    _state._engine_tracer = None
