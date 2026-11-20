@@ -8,7 +8,11 @@ WORKDIR /app
 
 # Copy dependency definition file first to leverage Docker layer caching
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc libc6-dev zlib1g-dev libjpeg62-turbo-dev && \
+    pip install --no-cache-dir -r requirements.txt && \
+    apt-get purge -y --auto-remove gcc libc6-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy backend application package and static files
 COPY ./app /app/app
