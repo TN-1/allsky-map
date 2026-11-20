@@ -207,7 +207,7 @@ def setup_telemetry(app: FastAPI, engine: Engine) -> bool:
 
     # 4. Auto-instrumentation for FastAPI, SQLAlchemy, and outbound HTTPX
     FastAPIInstrumentor.instrument_app(app)
-    SQLAlchemyInstrumentor().instrument(engine=engine)
+    SQLAlchemyInstrumentor().instrument(engine=engine, skip_dep_check=True)
     HTTPXClientInstrumentor().instrument()
 
     _state.enabled = True
