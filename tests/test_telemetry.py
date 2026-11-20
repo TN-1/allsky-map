@@ -91,3 +91,15 @@ def test_http_telemetry_middleware_records_bandwidth_and_latency():
     with TestClient(app) as client:
         res = client.get("/api/cameras")
         assert res.status_code == 200
+
+
+def test_sqlalchemy_fallback_when_greenlet_missing(monkeypatch):
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+    def _raise_greenlet(*args, **kwargs):
+        raise ImportError("greenlet missing")
+
+    monkeypatch.setattr(SQLAlchemyInstrumentor, "instrument", _raise_greenlet)
+    tracer = telemetry._instrument_sqlalchemy(engine)
+    assert tracer is not None
+    tracer.remove_all_event_listeners()
