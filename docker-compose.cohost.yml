@@ -1,0 +1,24 @@
+# Co-hosting override for running allsky-map alongside allsky-map-connect on one VPS.
+# Inactive by default. Activate via:
+#   docker compose -f docker-compose.yml -f docker-compose.cohost.yml up -d
+# or copy to docker-compose.override.yml (gitignored).
+
+services:
+  socket-proxy:
+    profiles: ["disabled"]
+
+  traefik:
+    profiles: ["disabled"]
+
+  error-pages:
+    profiles: ["disabled"]
+
+  allsky-api:
+    depends_on: !reset []
+    networks:
+      - connect_web
+
+networks:
+  connect_web:
+    external: true
+    name: allsky-map-connect_web

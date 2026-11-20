@@ -11,6 +11,7 @@ __pycache__/
 
 # Environments / Secrets
 .env
+docker-compose.override.yml
 .venv/
 env/
 venv/
