@@ -32,6 +32,22 @@ from app.schemas import CameraResponse, CameraPing
 from app.tasks import reap_the_dead, check_dead_links
 from app.ssrf import is_safe_url, resolve_safe_url
 from app.solar import is_nighttime
+from app.telemetry import (
+    bulk_export_bytes,
+    bulk_export_cameras,
+    bulk_exports,
+    camera_pings,
+    camera_registrations,
+    http_request_bytes,
+    http_request_duration_ms,
+    http_requests_total,
+    http_response_bytes,
+    image_upload_bytes,
+    rate_limit_hits,
+    setup_telemetry,
+    shutdown_telemetry,
+    websocket_connections,
+)
 
 # Configure logging (M-4)
 logging.basicConfig(level=logging.INFO)
@@ -114,9 +130,10 @@ def run_migrations():
 # In-memory rate limiter
 # ---------------------------------------------------------------------------
 class InMemoryRateLimiter:
-    def __init__(self, limit: int, window: int):
+    def __init__(self, limit: int, window: int, name: str = "default"):
         self.limit = limit
         self.window = window
+        self.name = name
         self.requests: dict = {}
         self.last_cleanup = time.time()
         self._lock = asyncio.Lock()
@@ -139,6 +156,7 @@ class InMemoryRateLimiter:
                 t for t in self.requests.get(client_ip, []) if t > window_start
             ]
             if len(self.requests[client_ip]) >= self.limit:
+                rate_limit_hits.add(1, {"limiter": self.name})
                 raise HTTPException(status_code=429, detail="Too Many Requests")
             self.requests[client_ip].append(now)
 
@@ -151,9 +169,9 @@ class InMemoryRateLimiter:
         }
         self.last_cleanup = now
 
-register_limiter = InMemoryRateLimiter(limit=5, window=60)
-ping_limiter     = InMemoryRateLimiter(limit=60, window=60)
-image_limiter    = InMemoryRateLimiter(limit=180, window=60)   # relaxed: rate-limit image proxy
+register_limiter = InMemoryRateLimiter(limit=5, window=60, name="register")
+ping_limiter     = InMemoryRateLimiter(limit=60, window=60, name="ping")
+image_limiter    = InMemoryRateLimiter(limit=180, window=60, name="image")   # relaxed: rate-limit image proxy
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +184,12 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        websocket_connections.add(1)
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+            websocket_connections.add(-1)
 
     async def broadcast(self, message: dict):
         for connection in list(self.active_connections):
@@ -189,6 +209,7 @@ http_client: httpx.AsyncClient | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
+    setup_telemetry(app, engine)
     http_client = httpx.AsyncClient(timeout=10.0)
     run_migrations()
     Base.metadata.create_all(bind=engine)
@@ -202,6 +223,7 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(task1, task2, return_exceptions=True)
         if http_client and not http_client.is_closed:
             await http_client.aclose()
+        shutdown_telemetry()
 
 
 app = FastAPI(
@@ -217,6 +239,50 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # Middlewares
 # ---------------------------------------------------------------------------
+
+def _resolve_route_label(request: Request) -> str:
+    route = request.scope.get("route")
+    if route is not None and getattr(route, "path", None):
+        return route.path
+    if request.url.path.startswith("/api/"):
+        return "unmatched_api"
+    return "static"
+
+
+@app.middleware("http")
+async def record_request_telemetry(request: Request, call_next):
+    start = time.perf_counter()
+    req_bytes = 0
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit():
+        req_bytes = int(cl)
+
+    status_code = 500
+    resp_bytes = 0
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        resp_cl = response.headers.get("content-length")
+        if resp_cl and resp_cl.isdigit():
+            resp_bytes = int(resp_cl)
+        elif hasattr(response, "body") and isinstance(response.body, (bytes, bytearray)):
+            resp_bytes = len(response.body)
+        return response
+    finally:
+        duration_ms = (time.perf_counter() - start) * 1000.0
+        route_label = _resolve_route_label(request)
+        attrs = {
+            "method": request.method,
+            "route": route_label,
+            "status_code": str(status_code),
+        }
+        http_requests_total.add(1, attrs)
+        http_request_duration_ms.record(duration_ms, attrs)
+        if req_bytes > 0:
+            http_request_bytes.add(req_bytes, {"method": request.method, "route": route_label})
+        if resp_bytes > 0:
+            http_response_bytes.add(resp_bytes, attrs)
+
 
 # Hard limit on request body (covers Content-Length and chunked encoding)
 MAX_PAYLOAD_SIZE = 25 * 1024 * 1024  # 25 MB
@@ -346,6 +412,7 @@ async def register_camera(request: Request, db: Session = Depends(get_db)) -> di
     new_entry = CameraDB(id=public_id, api_key=hashed_key, last_seen=datetime.now(timezone.utc))
     db.add(new_entry)
     db.commit()
+    camera_registrations.add(1)
     return {"api_key": raw_key}
 
 
@@ -415,6 +482,7 @@ async def update_camera(
 
             with open(image_path, "wb") as f:
                 f.write(decoded_image)
+            image_upload_bytes.add(len(decoded_image), {"kind": "raw"})
 
             # Generate and persist a reduced-resolution thumbnail for map popups
             # and the bulk export endpoint. Falls back gracefully if Pillow is absent.
@@ -423,6 +491,7 @@ async def update_camera(
                 thumb_path = os.path.join(image_dir, f"{cam.id}.thumb.img")
                 with open(thumb_path, "wb") as f:
                     f.write(thumb_bytes)
+                image_upload_bytes.add(len(thumb_bytes), {"kind": "thumb"})
             else:
                 logger.debug("Skipping thumbnail for camera %s (Pillow unavailable or decode failed)", cam.id)
 
@@ -436,6 +505,7 @@ async def update_camera(
     cam.status    = "online"
     db.commit()
     db.refresh(cam)
+    camera_pings.add(1, {"has_image": str(bool(data.image_base64 and data.image_base64.strip())).lower()})
 
     try:
         response_schema = CameraResponse.model_validate(cam)
@@ -740,6 +810,7 @@ def _build_bulk_zip(
         # Write manifest last so consumers can parse it without extracting images
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
+    bulk_export_cameras.record(len(cameras), {"night_only": str(night_only).lower()})
     return buf.getvalue()
 
 
@@ -789,6 +860,15 @@ async def bulk_image_export(
     # Execute synchronous DB and disk operations in a worker thread
     loop = asyncio.get_event_loop()
     zip_bytes = await loop.run_in_executor(None, _build_bulk_zip, db, min_lat, max_lat, min_lng, max_lng, night_only)
+
+    bounded = any(v is not None for v in (min_lat, max_lat, min_lng, max_lng))
+    export_attrs = {
+        "night_only": str(night_only).lower(),
+        "bounded": str(bounded).lower(),
+        "identity": authenticated_identity,
+    }
+    bulk_exports.add(1, export_attrs)
+    bulk_export_bytes.add(len(zip_bytes), {"night_only": str(night_only).lower(), "identity": authenticated_identity})
 
     return StreamingResponse(
         io.BytesIO(zip_bytes),

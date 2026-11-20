@@ -165,6 +165,10 @@ services:
       - DATABASE_URL=sqlite:////app/data/allsky_map.db
       - CARTO_API_KEY=${CARTO_API_KEY:-}
       - BULK_API_KEYS=${BULK_API_KEYS:-${BULK_API_KEY:-}}  # Comma-separated keys (e.g. key1:Alice,key2:Bob) — leave empty to disable
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-allsky-map}
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-}
     volumes:
       # Mount directory with SELinux compliant permissions flag :z
       - "./data:/app/data:z"

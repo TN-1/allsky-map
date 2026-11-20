@@ -190,6 +190,31 @@ The server runs two background tasks on an hourly schedule:
 
 ---
 
+## Observability (LGTM / OpenTelemetry)
+
+The server supports exporting **Logs** (Loki), **Metrics** (Mimir / Prometheus), and **Traces** (Tempo) over **OTLP/HTTP** to an external LGTM stack or Grafana Cloud instance. Telemetry is disabled by default when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
+
+Configure in `.env`:
+
+```env
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64_instance_id_and_token>
+OTEL_SERVICE_NAME=allsky-map
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production
+```
+
+**Exported Signals:**
+- **Traces:** FastAPI endpoints, SQLAlchemy queries, and outbound `httpx` requests.
+- **Logs:** Application logs (`INFO` and above) with automatic `trace_id` / `span_id` correlation.
+- **Metrics:**
+  - `allsky.http.requests`, `allsky.http.request.duration` (ms), `allsky.http.request.bytes`, `allsky.http.response.bytes` (ingress/egress bandwidth & latency per route)
+  - `allsky.cameras.count` (live gauge grouped by `status` and `allow_research`)
+  - `allsky.camera.registrations`, `allsky.camera.pings`, `allsky.camera.image_upload.bytes`
+  - `allsky.bulk_exports`, `allsky.bulk_export.bytes`, `allsky.bulk_export.cameras`
+  - `allsky.rate_limit.hits`, `allsky.websocket.connections`
+
+---
+
 ## Security Notes
 
 - API keys are **SHA-256 hashed** before storage — the server never holds raw keys
