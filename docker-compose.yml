@@ -76,14 +76,15 @@ services:
       # SSL Cert Management using Let's Encrypt (HTTP-01 challenge)
       - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
       - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL:-admin@indi-allsky-map.org}"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL:-admin@allsky-map.com}"
       - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
       # Disable Traefik dashboard and API entirely (prevents accidental exposure)
       - "--api=false"
-      # Access logging — X-API-Key header is redacted to protect camera credentials
+      # Access logging — sensitive headers are redacted to protect credentials
       - "--accesslog=true"
       - "--accesslog.fields.headers.defaultmode=drop"
       - "--accesslog.fields.headers.names.X-API-Key=drop"
+      - "--accesslog.fields.headers.names.X-Bulk-Key=drop"
       - "--log.level=INFO"
     ports:
       - "80:80"
@@ -163,6 +164,11 @@ services:
       - TZ=${TZ:-UTC}                # Set your local timezone in .env (e.g. TZ=Australia/Adelaide)
       - DATABASE_URL=sqlite:////app/data/allsky_map.db
       - CARTO_API_KEY=${CARTO_API_KEY:-}
+      - BULK_API_KEYS=${BULK_API_KEYS:-${BULK_API_KEY:-}}  # Comma-separated keys (e.g. key1:Alice,key2:Bob) — leave empty to disable
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-allsky-map}
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-}
     volumes:
       # Mount directory with SELinux compliant permissions flag :z
       - "./data:/app/data:z"

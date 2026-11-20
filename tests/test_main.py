@@ -439,17 +439,23 @@ def test_migration_alter_table(monkeypatch):
     # 3. ALTER TABLE ... -> succeeds
     # 4. SELECT image_url_valid -> raises exception
     # 5. ALTER TABLE ... -> succeeds
-    # 6. UPDATE site_url_valid
-    # 7. UPDATE image_url_valid
-    # 8. SELECT id -> raises exception
-    # 9. ALTER TABLE id -> succeeds
-    # 10. SELECT api_key, name -> returns mock_rows
-    # 11. CREATE UNIQUE INDEX -> succeeds
+    # 6. SELECT allow_research -> raises exception
+    # 7. ALTER TABLE ... -> succeeds
+    # 8. UPDATE site_url_valid
+    # 9. UPDATE image_url_valid
+    # 10. UPDATE allow_research
+    # 11. SELECT id -> raises exception
+    # 12. ALTER TABLE id -> succeeds
+    # 13. SELECT api_key, name -> returns mock_rows
+    # 14. CREATE UNIQUE INDEX -> succeeds
     mock_conn.execute.side_effect = [
         None,
         Exception("Column not found"),
         None,
         Exception("Column not found"),
+        None,
+        Exception("Column not found"),
+        None,
         None,
         None,
         None,
@@ -465,7 +471,7 @@ def test_migration_alter_table(monkeypatch):
     
     run_migrations()
     
-    assert mock_conn.execute.call_count == 11
+    assert mock_conn.execute.call_count == 14
 
 def test_migration_table_does_not_exist(monkeypatch):
     from app.main import run_migrations, engine
@@ -1104,6 +1110,202 @@ def test_image_cross_origin_hotlinking_protection():
         headers={"referer": "http://testserver/map"},
     )
     assert res_good_referer.status_code == 200
+
+
+def test_bulk_image_export_and_full_image(monkeypatch, tmp_path):
+    import base64
+    import io
+    import zipfile
+    import json
+    monkeypatch.setattr(app_module, "base_dir", str(tmp_path))
+    monkeypatch.setenv("BULK_API_KEYS", "test_secret_bulk_key:BobLab,second_key:AliceInstitute")
+
+    client = TestClient(app_module.app)
+
+    # 1. Register & ping a camera with image
+    reg = client.post("/api/register")
+    key = reg.json()["api_key"]
+    sample_png = b"\x89PNG\r\n\x1a\n" + b"X" * 150
+    b64_png = base64.b64encode(sample_png).decode("utf-8")
+
+    ping_res = client.post("/api/ping", json={
+        "name": "BulkTestCam",
+        "owner": "ResearcherBob",
+        "lat": 10.0,
+        "lng": 20.0,
+        "imageBase64": b64_png
+    }, headers={"X-API-Key": key})
+    assert ping_res.status_code == 200
+
+    cams = client.get("/api/cameras").json()
+    cam = next(c for c in cams if c["name"] == "BulkTestCam")
+    cam_id = cam["id"]
+
+    # 2. Test /image/full endpoint
+    full_res = client.get(f"/api/cameras/{cam_id}/image/full")
+    assert full_res.status_code == 200
+    assert full_res.content == sample_png
+
+    # 3. Test bulk export auth: missing header -> 422
+    assert client.get("/api/bulk/images.zip").status_code == 422
+
+    # 4. Test bulk export auth: wrong key -> 403
+    bad_auth = client.get("/api/bulk/images.zip", headers={"X-Bulk-Key": "wrong-key"})
+    assert bad_auth.status_code == 403
+
+    # 5. Test bulk export: valid key -> 200 ZIP with manifest and image
+    good_res = client.get("/api/bulk/images.zip", headers={"X-Bulk-Key": "test_secret_bulk_key"})
+    assert good_res.status_code == 200
+    assert good_res.headers["content-type"] == "application/zip"
+
+    with zipfile.ZipFile(io.BytesIO(good_res.content)) as zf:
+        namelist = zf.namelist()
+        assert "manifest.json" in namelist
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        assert any(entry["name"] == "BulkTestCam" for entry in manifest)
+        assert f"images/{cam_id}.jpg" in namelist
+
+    # 6. Test allow_research=False opt-out
+    reg2 = client.post("/api/register")
+    key2 = reg2.json()["api_key"]
+    client.post("/api/ping", json={
+        "name": "PrivateResearchCam",
+        "owner": "PrivateUser",
+        "lat": 15.0,
+        "lng": 25.0,
+        "imageBase64": b64_png,
+        "allowResearch": False
+    }, headers={"X-API-Key": key2})
+
+    # Verify subsequent ping omitting allowResearch does not accidentally re-opt-in
+    client.post("/api/ping", json={
+        "name": "PrivateResearchCam",
+        "owner": "PrivateUser",
+        "lat": 15.0,
+        "lng": 25.0,
+        "imageBase64": b64_png,
+    }, headers={"X-API-Key": key2})
+
+    res_opt_out2 = client.get("/api/bulk/images.zip", headers={"X-Bulk-Key": "test_secret_bulk_key"})
+    assert res_opt_out2.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res_opt_out2.content)) as zf:
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        assert not any(entry["name"] == "PrivateResearchCam" for entry in manifest)
+
+    # 7. Test geographic bounding box filtering
+    # Bounding box containing BulkTestCam (lat=10.0, lng=20.0)
+    in_bounds = client.get(
+        "/api/bulk/images.zip?min_lat=5.0&max_lat=12.0&min_lng=15.0&max_lng=25.0",
+        headers={"X-Bulk-Key": "test_secret_bulk_key"}
+    )
+    assert in_bounds.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(in_bounds.content)) as zf:
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        assert any(entry["name"] == "BulkTestCam" for entry in manifest)
+
+    # Bounding box NOT containing BulkTestCam
+    out_bounds = client.get(
+        "/api/bulk/images.zip?min_lat=30.0&max_lat=40.0&min_lng=15.0&max_lng=25.0",
+        headers={"X-Bulk-Key": "test_secret_bulk_key"}
+    )
+    assert out_bounds.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(out_bounds.content)) as zf:
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        assert len(manifest) == 0
+
+    # 8. Test invalid bounds validation
+    invalid_bounds = client.get(
+        "/api/bulk/images.zip?min_lat=50.0&max_lat=10.0",
+        headers={"X-Bulk-Key": "test_secret_bulk_key"}
+    )
+    assert invalid_bounds.status_code == 400
+
+    # 9. Test secondary key from list works
+    second_key_res = client.get("/api/bulk/images.zip", headers={"X-Bulk-Key": "second_key"})
+    assert second_key_res.status_code == 200
+
+    # 10. Test single key fallback via BULK_API_KEY
+    monkeypatch.delenv("BULK_API_KEYS", raising=False)
+    monkeypatch.setenv("BULK_API_KEY", "legacy_single_key")
+    fallback_res = client.get("/api/bulk/images.zip", headers={"X-Bulk-Key": "legacy_single_key"})
+    assert fallback_res.status_code == 200
+
+
+def test_night_only_bulk_export(monkeypatch, tmp_path):
+    import base64
+    import io
+    import zipfile
+    import json
+    from datetime import datetime, timezone
+    from app.solar import is_nighttime
+
+    monkeypatch.setattr(app_module, "base_dir", str(tmp_path))
+    monkeypatch.setenv("BULK_API_KEY", "night_test_key")
+
+    # Fixed time: 2026-06-21 12:00:00 UTC (June solstice)
+    fixed_dt = datetime(2026, 6, 21, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Unit verification of solar calculations
+    # North pole: continuous daylight (summer solstice)
+    assert is_nighttime(90.0, 0.0, fixed_dt) is False
+    # South pole: continuous polar night
+    assert is_nighttime(-90.0, 0.0, fixed_dt) is True
+    # Greenwich noon: daylight
+    assert is_nighttime(51.5, 0.0, fixed_dt) is False
+    # Antimeridian midnight: night
+    assert is_nighttime(0.0, 180.0, fixed_dt) is True
+
+    # Monkeypatch datetime in app.main to test night_only filtering
+    class MockDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_dt
+
+    monkeypatch.setattr(app_module, "datetime", MockDatetime)
+
+    client = TestClient(app_module.app)
+    sample_png = b"\x89PNG\r\n\x1a\n" + b"N" * 150
+    b64_png = base64.b64encode(sample_png).decode("utf-8")
+
+    # Camera 1: London (midday, daylight)
+    reg_day = client.post("/api/register")
+    client.post("/api/ping", json={
+        "name": "LondonDayCam",
+        "owner": "UKObserver",
+        "lat": 51.5,
+        "lng": 0.0,
+        "imageBase64": b64_png
+    }, headers={"X-API-Key": reg_day.json()["api_key"]})
+
+    # Camera 2: Fiji / Antimeridian (midnight, nighttime)
+    reg_night = client.post("/api/register")
+    client.post("/api/ping", json={
+        "name": "FijiNightCam",
+        "owner": "PacificObserver",
+        "lat": -18.0,
+        "lng": 178.0,
+        "imageBase64": b64_png
+    }, headers={"X-API-Key": reg_night.json()["api_key"]})
+
+    # Request all cameras without night filter
+    res_all = client.get("/api/bulk/images.zip", headers={"X-Bulk-Key": "night_test_key"})
+    assert res_all.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res_all.content)) as zf:
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        names = {c["name"] for c in manifest}
+        assert "LondonDayCam" in names
+        assert "FijiNightCam" in names
+
+    # Request with night_only=true
+    res_night = client.get("/api/bulk/images.zip?night_only=true", headers={"X-Bulk-Key": "night_test_key"})
+    assert res_night.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res_night.content)) as zf:
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        names = {c["name"] for c in manifest}
+        assert "FijiNightCam" in names
+        assert "LondonDayCam" not in names
+
+
 
 
 
