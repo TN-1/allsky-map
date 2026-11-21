@@ -223,8 +223,13 @@ def setup_telemetry(app: FastAPI, engine: Engine) -> bool:
     _logs.set_logger_provider(logger_provider)
 
     LoggingInstrumentor().instrument(set_logging_format=False)
-    log_handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
-    logging.getLogger().addHandler(log_handler)
+    root_logger = logging.getLogger()
+    existing_otel_handlers = [h for h in root_logger.handlers if isinstance(h, LoggingHandler)]
+    if existing_otel_handlers:
+        for h in existing_otel_handlers:
+            h.setLevel(logging.INFO)
+    else:
+        root_logger.addHandler(LoggingHandler(level=logging.INFO, logger_provider=logger_provider))
 
     # 4. Auto-instrumentation for FastAPI, SQLAlchemy, and outbound HTTPX
     FastAPIInstrumentor.instrument_app(app)
