@@ -1372,6 +1372,29 @@ def test_bulk_export_image_updated_and_max_age(monkeypatch, tmp_path):
         assert f"images/{stale_id}.jpg" not in zf.namelist()
 
 
+def test_make_thumbnail_preserves_exif():
+    import io
+    from PIL import Image
+
+    # Build a 2000x1500 JPEG containing EXIF DateTimeOriginal (36867) and ExposureTime (33434)
+    exif = Image.Exif()
+    exif[36867] = "2026:11:21 01:23:45"  # DateTimeOriginal
+    exif[33434] = (15, 1)                # ExposureTime = 15s
+
+    src_buf = io.BytesIO()
+    Image.new("RGB", (2000, 1500), color=(10, 20, 30)).save(src_buf, format="JPEG", exif=exif)
+
+    thumb_bytes = app_module.make_thumbnail(src_buf.getvalue())
+    assert thumb_bytes is not None
+
+    with Image.open(io.BytesIO(thumb_bytes)) as thumb_img:
+        assert max(thumb_img.size) == app_module.THUMB_MAX_PX
+        out_exif = thumb_img.getexif()
+        assert out_exif.get(36867) == "2026:11:21 01:23:45"
+        exp = out_exif.get(33434)
+        assert (exp[0] / exp[1] if isinstance(exp, tuple) else float(exp)) == 15.0
+
+
 
 
 
