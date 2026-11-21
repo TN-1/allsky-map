@@ -1306,6 +1306,72 @@ def test_night_only_bulk_export(monkeypatch, tmp_path):
         assert "LondonDayCam" not in names
 
 
+def test_bulk_export_image_updated_and_max_age(monkeypatch, tmp_path):
+    import base64
+    import io
+    import json
+    import time
+    import zipfile
+    from datetime import datetime
+
+    monkeypatch.setattr(app_module, "base_dir", str(tmp_path))
+    monkeypatch.setenv("BULK_API_KEY", "age_test_key")
+
+    client = TestClient(app_module.app)
+    sample_png = b"\x89PNG\r\n\x1a\n" + b"A" * 150
+    b64_png = base64.b64encode(sample_png).decode("utf-8")
+
+    reg_fresh = client.post("/api/register")
+    client.post("/api/ping", json={
+        "name": "FreshCam",
+        "owner": "Obs1",
+        "lat": -34.9,
+        "lng": 138.6,
+        "imageBase64": b64_png,
+    }, headers={"X-API-Key": reg_fresh.json()["api_key"]})
+
+    reg_stale = client.post("/api/register")
+    client.post("/api/ping", json={
+        "name": "StaleCam",
+        "owner": "Obs2",
+        "lat": -35.0,
+        "lng": 138.7,
+        "imageBase64": b64_png,
+    }, headers={"X-API-Key": reg_stale.json()["api_key"]})
+
+    cams = client.get("/api/cameras").json()
+    stale_id = next(c["id"] for c in cams if c["name"] == "StaleCam")
+
+    # Backdate StaleCam's stored image mtime by 3 hours
+    three_hours_ago = time.time() - 3 * 3600
+    for suffix in (f"{stale_id}.img", f"{stale_id}.thumb.img"):
+        p = tmp_path / "data" / "images" / suffix
+        if p.exists():
+            os.utime(p, (three_hours_ago, three_hours_ago))
+
+    # Without max_age_minutes, both cameras are present and have image_updated ISO timestamps
+    res_all = client.get("/api/bulk/images.zip", headers={"X-Bulk-Key": "age_test_key"})
+    assert res_all.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res_all.content)) as zf:
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        by_name = {c["name"]: c for c in manifest}
+        assert "FreshCam" in by_name
+        assert "StaleCam" in by_name
+        assert by_name["FreshCam"]["image_updated"] is not None
+        # Verify valid ISO 8601 timestamp
+        datetime.fromisoformat(by_name["FreshCam"]["image_updated"])
+
+    # With max_age_minutes=60, StaleCam is excluded
+    res_recent = client.get("/api/bulk/images.zip?max_age_minutes=60", headers={"X-Bulk-Key": "age_test_key"})
+    assert res_recent.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res_recent.content)) as zf:
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        names = {c["name"] for c in manifest}
+        assert "FreshCam" in names
+        assert "StaleCam" not in names
+        assert f"images/{stale_id}.jpg" not in zf.namelist()
+
+
 
 
 

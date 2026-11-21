@@ -10,7 +10,7 @@ import uuid
 import html
 import urllib.parse
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List
 from contextlib import asynccontextmanager
 import httpx
@@ -493,7 +493,7 @@ async def update_camera(
                     f.write(thumb_bytes)
                 image_upload_bytes.add(len(thumb_bytes), {"kind": "thumb"})
             else:
-                logger.debug("Skipping thumbnail for camera %s (Pillow unavailable or decode failed)", cam.id)
+                logger.warning("Skipping thumbnail for camera %s (PIL_AVAILABLE=%s)", cam.id, PIL_AVAILABLE)
 
             cam.image_url = "local"
             cam.image_url_valid = True
@@ -572,7 +572,7 @@ def make_thumbnail(raw_bytes: bytes) -> bytes | None:
             img.save(buf, format="JPEG", quality=THUMB_QUALITY, optimize=True)
             return buf.getvalue()
     except Exception as exc:
-        logger.debug("Thumbnail generation failed: %s", exc)
+        logger.warning("Thumbnail generation failed: %s", exc)
         return None
 
 
@@ -744,8 +744,9 @@ def _build_bulk_zip(
     min_lng: float | None = None,
     max_lng: float | None = None,
     night_only: bool = False,
+    max_age_minutes: int | None = None,
 ) -> bytes:
-    """Build the ZIP archive in memory on demand, honoring allow_research, location bounds, and solar altitude."""
+    """Build the ZIP archive in memory on demand, honoring allow_research, location bounds, solar altitude, and image age."""
     image_dir = os.path.join(base_dir, "data", "images")
     query = db.query(CameraDB).filter(CameraDB.name != None, CameraDB.allow_research == True)
 
@@ -759,38 +760,53 @@ def _build_bulk_zip(
         query = query.filter(CameraDB.lng <= max_lng)
 
     cameras = query.all()
+    now_utc = datetime.now(timezone.utc)
 
     if night_only:
-        now_utc = datetime.now(timezone.utc)
         cameras = [cam for cam in cameras if is_nighttime(cam.lat, cam.lng, now_utc)]
 
+    max_age_delta = timedelta(minutes=max_age_minutes) if max_age_minutes is not None else None
     manifest = []
     buf = io.BytesIO()
+    exported_cameras = 0
 
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
         for cam in cameras:
-            # Collect metadata for the manifest regardless of image availability
-            manifest.append({
-                "id":        cam.id,
-                "name":      cam.name,
-                "owner":     cam.owner,
-                "lat":       round(cam.lat, 2) if cam.lat is not None else None,
-                "lng":       round(cam.lng, 2) if cam.lng is not None else None,
-                "status":    cam.status,
-                "last_seen": cam.last_seen.isoformat() if cam.last_seen else None,
-                "site_url":  cam.site_url,
-            })
-
-            if not cam.id:
-                continue
-
-            # Prefer thumbnail; fall back to raw original
             img_path = None
-            for suffix in (f"{cam.id}.thumb.img", f"{cam.id}.img"):
-                cand = os.path.join(image_dir, suffix)
-                if os.path.exists(cand):
-                    img_path = cand
-                    break
+            raw_path = os.path.join(image_dir, f"{cam.id}.img") if cam.id else None
+            if cam.id:
+                # Prefer thumbnail; fall back to raw original
+                for suffix in (f"{cam.id}.thumb.img", f"{cam.id}.img"):
+                    cand = os.path.join(image_dir, suffix)
+                    if os.path.exists(cand):
+                        img_path = cand
+                        break
+
+            image_updated_dt: datetime | None = None
+            mtime_target = raw_path if (raw_path and os.path.exists(raw_path)) else img_path
+            if mtime_target:
+                try:
+                    image_updated_dt = datetime.fromtimestamp(os.stat(mtime_target).st_mtime, tz=timezone.utc)
+                except OSError:
+                    image_updated_dt = None
+
+            if max_age_delta is not None:
+                if image_updated_dt is None or (now_utc - image_updated_dt) > max_age_delta:
+                    continue
+
+            exported_cameras += 1
+            # Collect metadata for the manifest
+            manifest.append({
+                "id":            cam.id,
+                "name":          cam.name,
+                "owner":         cam.owner,
+                "lat":           round(cam.lat, 2) if cam.lat is not None else None,
+                "lng":           round(cam.lng, 2) if cam.lng is not None else None,
+                "status":        cam.status,
+                "last_seen":     cam.last_seen.isoformat() if cam.last_seen else None,
+                "image_updated": image_updated_dt.isoformat() if image_updated_dt else None,
+                "site_url":      cam.site_url,
+            })
 
             if not img_path:
                 continue
@@ -810,7 +826,7 @@ def _build_bulk_zip(
         # Write manifest last so consumers can parse it without extracting images
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
-    bulk_export_cameras.record(len(cameras), {"night_only": str(night_only).lower()})
+    bulk_export_cameras.record(exported_cameras, {"night_only": str(night_only).lower()})
     return buf.getvalue()
 
 
@@ -820,7 +836,7 @@ def _build_bulk_zip(
     description=(
         "Returns a ZIP archive of all camera thumbnails plus a manifest.json. "
         "Requires the X-Bulk-Key header matching the BULK_API_KEY env var. "
-        "Allows geographical bounding box filtering, nighttime solar altitude filtering, and excludes cameras opting out of research."
+        "Allows geographical bounding box filtering, nighttime solar altitude filtering, image age filtering, and excludes cameras opting out of research."
     ),
 )
 async def bulk_image_export(
@@ -831,6 +847,7 @@ async def bulk_image_export(
     min_lng: float | None = Query(None, ge=-180.0, le=180.0, description="Minimum longitude (-180 to 180)"),
     max_lng: float | None = Query(None, ge=-180.0, le=180.0, description="Maximum longitude (-180 to 180)"),
     night_only: bool = Query(False, description="Filter archive to only include cameras currently in nighttime"),
+    max_age_minutes: int | None = Query(None, ge=1, le=43200, description="Exclude cameras whose stored image is older than this many minutes"),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
     import hmac as _hmac
@@ -849,17 +866,20 @@ async def bulk_image_export(
         raise HTTPException(status_code=400, detail="min_lng cannot be greater than max_lng")
 
     logger.info(
-        "Bulk export: identity [%s] generating ZIP on demand (bounds: lat=[%s, %s], lng=[%s, %s], night_only=%s)",
+        "Bulk export: identity [%s] generating ZIP on demand (bounds: lat=[%s, %s], lng=[%s, %s], night_only=%s, max_age_minutes=%s)",
         authenticated_identity,
         min_lat,
         max_lat,
         min_lng,
         max_lng,
         night_only,
+        max_age_minutes,
     )
     # Execute synchronous DB and disk operations in a worker thread
     loop = asyncio.get_event_loop()
-    zip_bytes = await loop.run_in_executor(None, _build_bulk_zip, db, min_lat, max_lat, min_lng, max_lng, night_only)
+    zip_bytes = await loop.run_in_executor(
+        None, _build_bulk_zip, db, min_lat, max_lat, min_lng, max_lng, night_only, max_age_minutes
+    )
 
     bounded = any(v is not None for v in (min_lat, max_lat, min_lng, max_lng))
     export_attrs = {
