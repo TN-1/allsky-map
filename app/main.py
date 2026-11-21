@@ -564,12 +564,16 @@ def make_thumbnail(raw_bytes: bytes) -> bytes | None:
         return None
     try:
         with PilImage.open(io.BytesIO(raw_bytes)) as img:
+            exif_bytes = img.info.get("exif")
             # Convert palette/RGBA modes to RGB for clean JPEG output
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
             img.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX), PilImage.LANCZOS)
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=THUMB_QUALITY, optimize=True)
+            save_kwargs: dict = {"format": "JPEG", "quality": THUMB_QUALITY, "optimize": True}
+            if isinstance(exif_bytes, bytes) and exif_bytes:
+                save_kwargs["exif"] = exif_bytes
+            img.save(buf, **save_kwargs)
             return buf.getvalue()
     except Exception as exc:
         logger.warning("Thumbnail generation failed: %s", exc)
