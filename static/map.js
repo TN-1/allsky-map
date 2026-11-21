@@ -187,11 +187,30 @@ function createMarker(data) {
 
     // Site URL — prominent "Go To Site" button under image
     if (data.siteUrl) {
+        const href = safeHref(data.siteUrl);
+        let isConnectSite = false;
+        try {
+            const parsedUrl = new URL(href);
+            isConnectSite = parsedUrl.hostname.endsWith('.allsky-map.com') && parsedUrl.hostname !== 'connect.allsky-map.com';
+        } catch (_) {}
+
         const siteBtn = el('a', {
             cls: 'allsky-popup-btn btn btn-sm w-full mt-3 font-semibold shadow-md no-underline flex items-center justify-center gap-1.5',
-            attrs: { href: safeHref(data.siteUrl), target: '_blank', rel: 'noopener noreferrer' }
+            attrs: {
+                href,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+                ...(isConnectSite ? { title: 'Hosted via Allsky Map Connect' } : {})
+            }
         });
-        
+
+        if (isConnectSite) {
+            siteBtn.appendChild(el('img', {
+                cls: 'w-4 h-4 rounded-sm shrink-0',
+                attrs: { src: 'images/connect_logo.png', alt: 'Allsky Map Connect' }
+            }));
+        }
+
         const btnText = document.createTextNode('Go To Site');
         siteBtn.appendChild(btnText);
 
