@@ -116,6 +116,33 @@
 			</label>
 		</div>
 
+		<!-- Top Center: Floating Allsky Map Connect Announcement Banner -->
+		<div
+			id="connect-banner"
+			class="fixed top-4 left-1/2 -translate-x-1/2 z-1000 max-w-[92vw] flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-base-200/90 backdrop-blur-md border border-info/40 shadow-xl text-xs sm:text-sm"
+		>
+			<img src="images/connect_logo.png" alt="Allsky Map Connect" class="w-5 h-5 rounded-md shrink-0" />
+			<span class="truncate">
+				<strong>New:</strong> Remote HTTPS access for INDI Allsky via <strong>Allsky Map Connect</strong>
+			</span>
+			<a
+				href="https://connect.allsky-map.com"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="btn btn-primary btn-xs rounded-full shrink-0"
+			>
+				7-Day Free Trial
+			</a>
+			<button
+				type="button"
+				aria-label="Dismiss announcement"
+				class="btn btn-ghost btn-circle btn-xs shrink-0 opacity-70 hover:opacity-100"
+				onclick="document.getElementById('connect-banner').classList.add('hidden');"
+			>
+				✕
+			</button>
+		</div>
+
 		<!-- Bottom Left: Floating About/Info Trigger button overlay -->
 		<button id="about-btn" class="btn btn-neutral btn-sm shadow-xl absolute bottom-6 left-4 z-1000 rounded-full border border-base-300 bg-base-200/90 backdrop-blur-md text-base-content hover:bg-base-300 transition-all duration-300">
 			About / Sign Up
