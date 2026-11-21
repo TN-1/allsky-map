@@ -141,6 +141,7 @@ Generates an in-memory ZIP archive of camera thumbnail images and a `manifest.js
 
 **Query Parameters (Optional):**
 - `night_only` (boolean, default: `false`): When `true`, filters cameras to only those currently in nighttime, calculated using solar elevation ($\text{altitude} < 0^\circ$) matching the map terminator overlay.
+- `max_age_minutes` (integer, 1 to 43200): Excludes cameras whose stored image is older than this many minutes (useful for skipping stale offline stations).
 - `min_lat` (float, -90.0 to 90.0): Southern boundary
 - `max_lat` (float, -90.0 to 90.0): Northern boundary
 - `min_lng` (float, -180.0 to 180.0): Western boundary

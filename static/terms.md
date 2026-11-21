@@ -51,7 +51,7 @@ We welcome collaboration with genuine astronomical, meteorological, and open-sou
 ## 4. Authorized Research & Archival Projects
 Only the following external projects are currently authorized to access bulk camera datasets via authenticated API endpoints (excluding all opted-out cameras):
 
-1. **Provisional Research Partner (Testing Phase)** — Non-commercial astronomical observation and atmospheric cloud monitoring (authenticated access provisioned via dedicated `X-Bulk-Key`).
+1. **AllSky Lab** ([https://allskylab.ca](https://allskylab.ca), `jerry@allskylab.ca`) — Non-commercial research on night-time cloud detection, comparing satellite cloud products against star visibility in all-sky camera images.
 2. **None currently active** — No additional third-party entities hold active authorization keys.
 
 Any automated client attempting unauthorized bulk scraping outside these parameters is subject to immediate IP/ASN blocking at the Cloudflare edge.
