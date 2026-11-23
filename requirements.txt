@@ -6,7 +6,7 @@ httpx==0.28.1
 websockets==17.4
 Pillow>=13.0.0,<14.0
 opentelemetry-sdk>=1.45.2,<2.0
-opentelemetry-exporter-otlp-proto-http>=1.30,<2.0
+opentelemetry-exporter-otlp-proto-http>=1.45.2,<2.0
 opentelemetry-instrumentation-fastapi>=0.66b2
 opentelemetry-instrumentation-sqlalchemy>=0.66b2
 opentelemetry-instrumentation-httpx>=0.51b0
