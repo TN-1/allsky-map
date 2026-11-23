@@ -1,7 +1,7 @@
 uvicorn==0.54.0
 fastapi==0.162.5
 pydantic==2.14.3
-sqlalchemy==2.1.8
+sqlalchemy==2.1.9
 httpx==0.28.1
 websockets==17.4
 Pillow>=10.0,<12.0
